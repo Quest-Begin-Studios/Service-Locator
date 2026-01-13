@@ -30,10 +30,6 @@ The Service Locator pattern provides a centralized registry for accessing servic
 ✅ **Automatic Discovery** - Services are automatically discovered and registered via `[ServiceAttribute]`  
 ✅ **Flexible Initialization** - Support for both synchronous and asynchronous service initialization  
 ✅ **State Tracking** - Built-in configuration state tracking (Uninitialized, InProgress, Success, Failed)  
-✅ **Container Management** - Independent containers for different service scopes  
-✅ **Editor-Safe** - Proper cleanup between editor play sessions  
-✅ **Event System** - Subscribe to container initialization events  
-✅ **Type Safety** - Generic methods ensure compile-time type safety  
 
 ## Architecture
 
@@ -419,42 +415,18 @@ public enum Lifetime
 
 - **Use interfaces** for service contracts to enable testability and flexibility
 - **Initialize services early** in the application lifecycle
-- **Check initialization status** before using async services
 - **Dispose properly** by implementing `IDisposable` for services with resources
 - **Use appropriate lifetimes** - Global for app-wide, Context for game states, Scene for level-specific
-- **Handle initialization failures** gracefully with try-catch or state checks
-- **Subscribe/unsubscribe** to events properly to avoid memory leaks
 
 ### ❌ DON'T
 
-- **Don't access services in constructors** - they may not be initialized yet
-- **Don't create circular dependencies** between services
+- **Avoid circular dependencies** between services. Resolvable by awaiting initialization using `AwaitInitialization` 
 - **Don't store service references** across scene loads for Scene-lifetime services
 - **Don't forget to purge context containers** when leaving game states
 - **Don't mix lifetime scopes** - keep service dependencies within the same or broader scope
 - **Don't use ServiceLocator in static constructors** - timing issues may occur
 
-### Service Design Guidelines
-
-```csharp
-// ✅ GOOD: Interface-based, clear responsibility
-public interface IAudioService : IService
-{
-    void PlaySound(string soundId);
-    void SetVolume(float volume);
-}
-
-// ❌ BAD: Concrete class, multiple responsibilities
-public class GameManager : IService
-{
-    void PlaySound() { }
-    void SaveGame() { }
-    void LoadLevel() { }
-    void UpdateUI() { }
-}
-```
-
-## Advanced Topics
+## Usage Tips
 
 ### Custom Context Scopes
 
@@ -463,7 +435,7 @@ Extend the `Context` enum in `BaseServiceContainer.cs` to define your own contex
 ```csharp
 public enum Context
 {
-    None,
+    None, // Reserved, do not use
     MainMenu,
     Gameplay,
     PauseMenu,
@@ -559,21 +531,6 @@ This ensures no state leakage between play sessions in the Unity Editor.
 - Verify container for that lifetime has been initialized
 - Use `TryGet` methods for safer retrieval
 
-### Initialization Failed
-**Problem:** Service `ConfigState` is `Failed`  
-**Solution:**
-- Check console for error messages
-- Verify `InitializeService()` or `InitializeServiceAsync()` returns true
-- Ensure service dependencies are available
-- Check for exceptions in initialization code
-
-### Wrong Initialization Method Called
-**Problem:** Error: "Use Async Initialization for this service"  
-**Solution:**
-- Ensure `IsAsyncInit` property matches your initialization method
-- Use `InitializeServiceAsync()` when `IsAsyncInit` is true
-- Use `InitializeService()` when `IsAsyncInit` is false
-
 ### Context Services Not Available
 **Problem:** Context service returns null  
 **Solution:**
@@ -581,22 +538,12 @@ This ensures no state leakage between play sessions in the Unity Editor.
 - Ensure you're using the correct `Context` enum value
 - Verify the service attribute specifies the correct context
 
-## Contributing
-
-When extending this system:
-
-1. Follow the existing code style and patterns
-2. Add XML documentation to all public APIs
-3. Ensure proper cleanup in `DisposeContainer()` methods
-4. Test with multiple play sessions in the editor
-5. Consider thread safety for async operations
-
 ## License
 
 This Service Locator implementation is part of the QBS framework.
 
 ---
 
-**Version:** 1.0  
+**Version:** 1.1
 **Last Updated:** January 2026  
-**Unity Version:** 2021.3+
+**Unity Version:** 6000.0.62f1
