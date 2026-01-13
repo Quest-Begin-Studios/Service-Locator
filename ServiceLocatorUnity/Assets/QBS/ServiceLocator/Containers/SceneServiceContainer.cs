@@ -4,33 +4,33 @@ using UnityEngine;
 
 namespace QBS.ServiceLocator
 {
-	public class SceneServiceContainer : IServiceContainer
+	/// <summary>
+	///     Specialized service container for Scene-lifetime services that require manual registration. <br/><br/>
+	///     Unlike other containers, scene services are not auto-discovered and must be explicitly registered,
+	///     allowing services to manage their own initialization lifecycle within scene contexts.
+	/// </summary>
+	public class SceneServiceContainer : BaseServiceContainer
 	{
-		public Lifetime ContainerLifetime => Lifetime.Scene;
-		public Context ContainerContext => Context.None;
-		public Dictionary<Type, IService> ServicesMap { get; }
-		public Dictionary<Type, ServiceAttribute> AllServices { get; }
-
 		//Services that register to a scene service container handle their own initializations 
-		public bool ContainerInitialized => true;
+		public override bool ContainerInitialized => true;
 
 		public event Action<Type, IService> SceneServiceRegistered;
 
 		public SceneServiceContainer(Dictionary<Type, ServiceAttribute> allServices)
 		{
-			ServicesMap = new Dictionary<Type, IService>();
-			AllServices = allServices;
+			ContainedServices = new Dictionary<Type, IService>();
+			AllServicesMap = allServices;
 		}
 
 		public void RegisterService<T>(IService service) where T : class, IService
 		{
 			var serviceType = typeof(T);
-			if (ServicesMap.ContainsKey(serviceType))
+			if (ContainedServices.ContainsKey(serviceType))
 			{
 				Debug.LogError($"Service {serviceType.FullName} already registered for this scene context");
 			}
 
-			if (!AllServices.TryGetValue(typeof(T), out var serviceAttribute))
+			if (!AllServicesMap.TryGetValue(typeof(T), out var serviceAttribute))
 			{
 				Debug.Log($"Service {serviceType.FullName} is not marked with an ServiceAttribute");
 				return;
@@ -42,21 +42,13 @@ namespace QBS.ServiceLocator
 				return;
 			}
 
-			ServicesMap.Add(serviceType, service);
+			ContainedServices.Add(serviceType, service);
 			SceneServiceRegistered?.Invoke(serviceType, service);
 		}
 
-		public void DisposeContainer()
+		public override void DisposeContainer()
 		{
-			foreach (var (_, service) in ServicesMap)
-			{
-				if (service is IDisposable disposable)
-				{
-					disposable.Dispose();
-				}
-			}
-
-			ServicesMap.Clear();
+			base.DisposeContainer();
 			SceneServiceRegistered = null;
 		}
 	}

@@ -1,13 +1,34 @@
+using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using UnityEngine;
 
 namespace QBS.ServiceLocator
 {
+	/// <summary>
+	///     Represents the initialization state of a service throughout its lifecycle.
+	/// </summary>
+	public enum ConfigurationState
+	{
+		Uninitialized,
+		InProgress,
+		Failed,
+		Success,
+	}
+
+	/// <summary>
+	///     Core interface for all services in the Service Locator pattern.
+	///     Provides lifecycle management with support for both synchronous and asynchronous initialization,
+	///     configuration state tracking, and initialization awaiting capabilities.
+	/// </summary>
 	public interface IService
 	{
+		private static readonly ConditionalWeakTable<IService, ServiceState> ConfigStateTable = new();
 		public bool IsAsyncInit { get; }
-
-		public ConfigurationState ConfigState { get; protected set; }
+		public ConfigurationState ConfigState
+		{
+			get => ConfigStateTable.GetOrCreateValue(this).ConfigState;
+			private set => ConfigStateTable.GetOrCreateValue(this).ConfigState = value;
+		}
 
 		public void Initialize()
 		{
@@ -75,6 +96,22 @@ namespace QBS.ServiceLocator
 			}
 
 			return ConfigState == ConfigurationState.Success;
+		}
+
+		/// <summary>
+		///     Clears the static configuration state table.
+		/// </summary>
+		public static void CleanupConfigStateTable()
+		{
+			ConfigStateTable.Clear();
+		}
+
+		/// <summary>
+		///     Data holder class for the static ConfigStateTable
+		/// </summary>
+		private class ServiceState
+		{
+			public ConfigurationState ConfigState;
 		}
 	}
 }

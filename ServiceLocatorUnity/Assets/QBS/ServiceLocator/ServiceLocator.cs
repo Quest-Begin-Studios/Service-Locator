@@ -4,6 +4,11 @@ using UnityEngine;
 
 namespace QBS.ServiceLocator
 {
+	/// <summary>
+	/// Central service locator providing global access to services across different lifetimes and contexts.
+	/// Manages service discovery, registration, and retrieval for Global, ScopedContext, and Scene lifetime services.
+	/// Automatically initializes global services at runtime and provides container management for different service scopes.
+	/// </summary>
 	public static class ServiceLocator
 	{
 
@@ -59,6 +64,7 @@ namespace QBS.ServiceLocator
 					container?.DisposeContainer();
 				}
 			}
+			IService.CleanupConfigStateTable();
 
 			_sceneServiceContainer?.DisposeContainer();
 
@@ -151,14 +157,7 @@ namespace QBS.ServiceLocator
 				}
 			}
 		}
-
-		public static void RefreshSceneServiceContainer()
-		{
-			//Force dispose scene container
-			_sceneServiceContainer?.DisposeContainer();
-			_sceneServiceContainer = new SceneServiceContainer(_allServicesMap);
-		}
-
+		
 		private static void GetAllServiceAttributedTypes()
 		{
 			_allServicesMap = new Dictionary<Type, ServiceAttribute>();
@@ -198,7 +197,7 @@ namespace QBS.ServiceLocator
 		{
 			if (_serviceContextMap.TryGetValue(typeof(TService), out var context))
 			{
-				IServiceContainer serviceContainer = _contextServiceContainers[context];
+				var serviceContainer = _contextServiceContainers[context];
 				return serviceContainer.GetService<TService>();
 			}
 
@@ -207,12 +206,34 @@ namespace QBS.ServiceLocator
 
 		public static TService FetchSceneService<TService>() where TService : class, IService
 		{
-			return ((IServiceContainer)_sceneServiceContainer).GetService<TService>();
+			return _sceneServiceContainer.GetService<TService>();
 		}
 
 		public static TService FetchGlobalService<TService>() where TService : class, IService
 		{
-			return ((IServiceContainer)_globalServiceContainer).GetService<TService>();
+			return _globalServiceContainer.GetService<TService>();
+		}
+
+		public static bool TryGetContextService<TService>(out TService service) where TService : class, IService
+		{
+			service = null;
+			if (_serviceContextMap.TryGetValue(typeof(TService), out var context))
+			{
+				var serviceContainer = _contextServiceContainers[context];
+				return serviceContainer.TryGetService(out service);
+			}
+
+			return false;
+		}
+
+		public static bool TryGetSceneService<TService>(out TService service) where TService : class, IService
+		{
+			return _sceneServiceContainer.TryGetService(out service);
+		}
+
+		public static bool TryGetGlobalService<TService>(out TService service) where TService : class, IService
+		{
+			return _globalServiceContainer.TryGetService(out service);
 		}
 
         #endregion
@@ -244,12 +265,19 @@ namespace QBS.ServiceLocator
 
 			_sceneServiceContainer.RegisterService<TService>(service);
 		}
-
+		
+		public static void RefreshSceneServiceContainer()
+		{
+			//Force dispose scene container
+			_sceneServiceContainer?.DisposeContainer();
+			_sceneServiceContainer = new SceneServiceContainer(_allServicesMap);
+		}
+		
 		public static void SubscribeToContextServiceSetup(Context context, Action onSetup)
 		{
 			if (!_contextServiceContainers.TryGetValue(context, out var container))
 			{
-				Debug.LogError($"Service Container for Context: {context} has not been setup yet.");
+				Debug.LogError($"Service Container for Context: {context} has not been created yet.");
 				return;
 			}
 

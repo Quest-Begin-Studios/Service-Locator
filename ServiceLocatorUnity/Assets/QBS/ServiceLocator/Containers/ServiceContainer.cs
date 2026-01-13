@@ -5,28 +5,30 @@ using UnityEngine;
 
 namespace QBS.ServiceLocator
 {
-	public class ServiceContainer : IServiceContainer
+	/// <summary>
+	///     Standard implementation of IServiceContainer for managing Global and ScopedContext services.
+	///     Handles automatic service discovery, instantiation via reflection, and initialization of services
+	///     within a specific lifetime scope. Supports both synchronous and asynchronous service initialization.
+	/// </summary>
+	public class ServiceContainer : BaseServiceContainer
 	{
-		public Context ContainerContext { get; }
-		public Dictionary<Type, IService> ServicesMap { get; }
 		public Dictionary<Type, ServiceAttribute> AllServices { get; }
-		public bool ContainerInitialized { get; private set; }
-		public Lifetime ContainerLifetime { get; }
 		public event Action ContainerServicesInitialized;
 
-		public ServiceContainer(Lifetime containerLifetime, Dictionary<Type, ServiceAttribute> allServices,
+		public ServiceContainer(Lifetime containerLifetime,
+			Dictionary<Type, ServiceAttribute> allServices,
 			Context context = Context.None)
 		{
-			ServicesMap = new Dictionary<Type, IService>();
+			ContainedServices = new Dictionary<Type, IService>();
 			ContainerLifetime = containerLifetime;
 			ContainerContext = context;
 			AllServices = allServices;
 		}
 
-        /// <summary>
-        ///     Called when entering this container's context. Populates the service map and initializes all services.
-        /// </summary>
-        public void OnEnteredContainerLifetime()
+		/// <summary>
+		///     Called when entering this container's context. Populates the service map and initializes all services.
+		/// </summary>
+		public void OnEnteredContainerLifetime()
 		{
 			if (ContainerLifetime == Lifetime.None)
 			{
@@ -38,11 +40,11 @@ namespace QBS.ServiceLocator
 			InitializeServices();
 		}
 
-        /// <summary>
-        ///     Populates the ServicesMap with service instances that match this container's context.
-        ///     Creates instances using parameterless constructors via reflection.
-        /// </summary>
-        private void PopulateMapWithServicesOfLifetime()
+		/// <summary>
+		///     Populates the ServicesMap with service instances that match this container's context.
+		///     Creates instances using parameterless constructors via reflection.
+		/// </summary>
+		private void PopulateMapWithServicesOfLifetime()
 		{
 			foreach (var (actualType, serviceAttribute) in AllServices)
 			{
@@ -60,7 +62,7 @@ namespace QBS.ServiceLocator
 				}
 
 				var serviceType = serviceAttribute.ServiceType;
-				if (ServicesMap.ContainsKey(serviceType))
+				if (ContainedServices.ContainsKey(serviceType))
 				{
 					continue;
 				}
@@ -75,7 +77,7 @@ namespace QBS.ServiceLocator
 						continue;
 					}
 
-					ServicesMap.Add(serviceType, serviceInstance);
+					ContainedServices.Add(serviceType, serviceInstance);
 				}
 				catch (Exception e)
 				{
@@ -85,14 +87,14 @@ namespace QBS.ServiceLocator
 			}
 		}
 
-        /// <summary>
-        ///     Initializes all services in the container. Synchronous services are initialized first,
-        ///     followed by asynchronous services. Invokes ContainerServicesInitialized event when complete.
-        /// </summary>
-        private void InitializeServices()
+		/// <summary>
+		///     Initializes all services in the container. Synchronous services are initialized first,
+		///     followed by asynchronous services. Invokes ContainerServicesInitialized event when complete.
+		/// </summary>
+		private void InitializeServices()
 		{
 			List<Task> asyncInitializations = new();
-			foreach (var (_, serviceInstance) in ServicesMap)
+			foreach (var (_, serviceInstance) in ContainedServices)
 			{
 				if (!serviceInstance.IsAsyncInit)
 				{
@@ -100,7 +102,7 @@ namespace QBS.ServiceLocator
 				}
 			}
 
-			foreach (var (_, serviceInstance) in ServicesMap)
+			foreach (var (_, serviceInstance) in ContainedServices)
 			{
 				if (serviceInstance.IsAsyncInit)
 				{
@@ -128,18 +130,9 @@ namespace QBS.ServiceLocator
 			ContainerServicesInitialized?.Invoke();
 		}
 
-		public void DisposeContainer()
+		public override void DisposeContainer()
 		{
-			foreach (var (_, service) in ServicesMap)
-			{
-				if (service is IDisposable disposable)
-				{
-					disposable.Dispose();
-				}
-			}
-
-			ServicesMap.Clear();
-			ContainerInitialized = false;
+			base.DisposeContainer();
 			ContainerServicesInitialized = null;
 		}
 	}
