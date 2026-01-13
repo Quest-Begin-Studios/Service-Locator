@@ -17,8 +17,8 @@ A robust, flexible Service Locator implementation for Unity that provides centra
 
 The Service Locator pattern provides a centralized registry for accessing services throughout your application. This implementation offers:
 
-- **Three lifetime scopes**: Global, ScopedContext, and Scene
 - **Automatic service discovery** via reflection and attributes
+- **Three lifetime scopes**: Global, ScopedContext, and Scene
 - **Async/sync initialization** support
 - **Type-safe service retrieval**
 - **Proper cleanup** between Unity editor play sessions
