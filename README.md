@@ -21,13 +21,11 @@ The Service Locator pattern provides a centralized registry for accessing servic
 - **Three lifetime scopes**: Global, ScopedContext, and Scene
 - **Async/sync initialization** support
 - **Type-safe service retrieval**
-- **Proper cleanup** between Unity editor play sessions
-- **Event-driven initialization** notifications
 
 ## Features
 
-✅ **Multiple Lifetime Scopes** - Services can be Global (app lifetime), ScopedContext (custom contexts), or Scene-specific  
 ✅ **Automatic Discovery** - Services are automatically discovered and registered via `[ServiceAttribute]`  
+✅ **Multiple Lifetime Scopes** - Services can be Global (app lifetime), ScopedContext (custom contexts), or Scene-specific  
 ✅ **Flexible Initialization** - Support for both synchronous and asynchronous service initialization  
 ✅ **State Tracking** - Built-in configuration state tracking (Uninitialized, InProgress, Success, Failed)  
 
@@ -53,9 +51,9 @@ ServiceLocator/
 - Central access point for all services
 - Manages service discovery and container lifecycle
 - Provides retrieval methods for all lifetime scopes
-- Handles cleanup between play sessions
+- Handles cleanup between editor play sessions
 
-#### **IService** (Interface)
+#### **IService** (Core Interface)
 - Core interface all services must implement
 - Provides initialization lifecycle methods
 - Tracks configuration state
@@ -426,7 +424,7 @@ public enum Lifetime
 - **Don't mix lifetime scopes** - keep service dependencies within the same or broader scope
 - **Don't use ServiceLocator in static constructors** - timing issues may occur
 
-## Usage Tips
+## Advanced Topics
 
 ### Custom Context Scopes
 
