@@ -16,21 +16,7 @@ namespace QBS.ServiceLocator
 		ScopedContext,
 		Global,
 	}
-	
-	/// <summary>
-	/// Defines custom context scopes for ScopedContext lifetime services.
-	/// Allows grouping services into logical contexts that can be independently initialized and disposed.
-	/// Populate as required to define application-specific contexts (e.g., MainMenu, Gameplay, Settings).
-	/// </summary>
-	public enum Context
-	{
-		// Reserved, do not use.
-		None,
 
-		// ReSharper disable once InconsistentNaming
-		_Count,
-	}
-	
 	/// <summary>
 	/// Defines the contract for service containers that manage collections of services.
 	/// Provides service storage, retrieval, and lifecycle management for a specific lifetime and context.
@@ -84,10 +70,7 @@ namespace QBS.ServiceLocator
 		{
 			foreach (var (_, service) in ContainedServices)
 			{
-				if (service is IDisposable disposable)
-				{
-					disposable.Dispose();
-				}
+				service.Dispose();
 			}
 			
 			ContainedServices.Clear();

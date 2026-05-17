@@ -17,14 +17,15 @@ namespace QBS.ServiceLocator
 		public ServiceAttribute(Lifetime lifetime, Type serviceType)
 		{
 			Lifetime = lifetime;
-			Context = Context.None;
+			Context = default;
 			ServiceType = serviceType;
 		}
 
-		//For Scoped Context Services
-		public ServiceAttribute(Context context, Type serviceType)
+		//For Scoped Context Services — contextValue must be a const int defined in consumer assembly
+		public ServiceAttribute(int contextValue, Type serviceType)
 		{
-			Context = context;
+			// implicit conversion to `Context`
+			Context = contextValue;
 			ServiceType = serviceType;
 			Lifetime = Lifetime.ScopedContext;
 		}

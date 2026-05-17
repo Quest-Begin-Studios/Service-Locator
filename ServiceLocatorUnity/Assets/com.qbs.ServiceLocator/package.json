@@ -1,0 +1,15 @@
+{
+  "name": "com.qbs.[package-name]",
+  "version": "1.0.0",
+  "displayName": "Package Example",
+  "description": "This is an example package",
+  "unity": "6000.0",
+  "dependencies": {},
+ "keywords": [],
+  "author": {
+    "name": "Quest Begin Studios",
+    "email": "questbeginstudios@gmail.com",
+    "url": "https://github.com/Quest-Begin-Studios"
+  }
+}
+

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using QBS.Core;
 using UnityEngine;
 
 namespace QBS.ServiceLocator
@@ -27,18 +28,19 @@ namespace QBS.ServiceLocator
 			var serviceType = typeof(T);
 			if (ContainedServices.ContainsKey(serviceType))
 			{
-				Debug.LogError($"Service {serviceType.FullName} already registered for this scene context");
+				Log.Error($"Service {serviceType.FullName} already registered for this scene context");
+				return;
 			}
 
 			if (!AllServicesMap.TryGetValue(typeof(T), out var serviceAttribute))
 			{
-				Debug.Log($"Service {serviceType.FullName} is not marked with an ServiceAttribute");
+				Log.Error($"Service {serviceType.FullName} is not marked with an ServiceAttribute");
 				return;
 			}
 
 			if (serviceAttribute.Lifetime != Lifetime.Scene)
 			{
-				Debug.LogError($"Service {serviceType.FullName} is not a Scene context service");
+				Log.Error($"Service {serviceType.FullName} is not a Scene context service");
 				return;
 			}
 

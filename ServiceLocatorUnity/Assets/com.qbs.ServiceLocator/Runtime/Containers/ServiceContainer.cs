@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using UnityEngine;
+using QBS.Core;
 
 namespace QBS.ServiceLocator
 {
@@ -12,12 +12,12 @@ namespace QBS.ServiceLocator
 	/// </summary>
 	public class ServiceContainer : BaseServiceContainer
 	{
-		public Dictionary<Type, ServiceAttribute> AllServices { get; }
+		public IReadOnlyDictionary<Type, ServiceAttribute> AllServices { get; }
 		public event Action ContainerServicesInitialized;
 
 		public ServiceContainer(Lifetime containerLifetime,
 			Dictionary<Type, ServiceAttribute> allServices,
-			Context context = Context.None)
+			Context context = default)
 		{
 			ContainedServices = new Dictionary<Type, IService>();
 			ContainerLifetime = containerLifetime;
@@ -32,7 +32,7 @@ namespace QBS.ServiceLocator
 		{
 			if (ContainerLifetime == Lifetime.None)
 			{
-				Debug.LogError("Container Setup Incorrectly");
+				Log.Error("Container Setup Incorrectly");
 				return;
 			}
 
@@ -73,7 +73,7 @@ namespace QBS.ServiceLocator
 					var serviceObject = Activator.CreateInstance(actualType);
 					if (serviceObject is not IService serviceInstance)
 					{
-						Debug.LogError($"Service {serviceType.FullName} does not implement IService");
+						Log.Error($"Service {serviceType.FullName} does not implement IService");
 						continue;
 					}
 
@@ -81,7 +81,7 @@ namespace QBS.ServiceLocator
 				}
 				catch (Exception e)
 				{
-					Debug.LogError(e.Message);
+					Log.Error(e.Message);
 					throw;
 				}
 			}
@@ -106,7 +106,7 @@ namespace QBS.ServiceLocator
 			{
 				if (serviceInstance.IsAsyncInit)
 				{
-					asyncInitializations.Add(serviceInstance.InitializeAsync());
+					asyncInitializations.Add(serviceInstance.InitializeAsyncWrapper());
 				}
 			}
 
@@ -123,6 +123,9 @@ namespace QBS.ServiceLocator
 			}
 		}
 
+		// TODO: Capture SynchronizationContext.Current in constructor and use ConfigureAwait(false) +
+		// SynchronizationContext.Post here to explicitly marshal ContainerInitialized and
+		// ContainerServicesInitialized back to the main thread instead of relying on implicit capture.
 		private async Task HandleAsyncInitializations(List<Task> asyncInitializations)
 		{
 			await Task.WhenAll(asyncInitializations);
