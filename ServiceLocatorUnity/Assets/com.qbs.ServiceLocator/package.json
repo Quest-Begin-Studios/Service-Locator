@@ -1,15 +1,19 @@
 {
-  "name": "com.qbs.[package-name]",
+  "name": "com.qbs.service-locator",
   "version": "1.0.0",
-  "displayName": "Package Example",
-  "description": "This is an example package",
+  "displayName": "QBS Service Locator",
+  "description": "Lightweight, reflection-driven Service Locator for Unity. Provides automatic service discovery via attributes, three lifetime scopes (Global, ScopedContext, Scene), parallel async initialization, and clean editor play-session resets.",
   "unity": "6000.0",
-  "dependencies": {},
- "keywords": [],
+  "keywords": [
+    "service-locator",
+    "services",
+    "dependency-injection",
+    "architecture",
+    "runtime"
+  ],
   "author": {
     "name": "Quest Begin Studios",
     "email": "questbeginstudios@gmail.com",
     "url": "https://github.com/Quest-Begin-Studios"
   }
 }
-
