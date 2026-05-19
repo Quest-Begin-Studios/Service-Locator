@@ -31,6 +31,5 @@
 	public static partial class GameContexts
 	{
 		public static readonly Context None = default;
-		public static readonly Context MainMenu = new Context(1);
 	}
 }
