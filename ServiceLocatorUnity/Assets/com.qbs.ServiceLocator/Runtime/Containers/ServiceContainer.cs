@@ -1,6 +1,6 @@
 using System;
 using System.Collections.Generic;
-using System.Threading.Tasks;
+using Cysharp.Threading.Tasks;
 using QBS.Core;
 
 namespace QBS.ServiceLocator
@@ -81,7 +81,7 @@ namespace QBS.ServiceLocator
 				}
 				catch (Exception e)
 				{
-					Log.Error(e.Message);
+					Log.Error(e.ToString());
 					throw;
 				}
 			}
@@ -93,7 +93,7 @@ namespace QBS.ServiceLocator
 		/// </summary>
 		private void InitializeServices()
 		{
-			List<Task> asyncInitializations = new();
+			List<UniTask> asyncInitializations = new();
 			foreach (var (_, serviceInstance) in ContainedServices)
 			{
 				if (!serviceInstance.IsAsyncInit)
@@ -119,18 +119,22 @@ namespace QBS.ServiceLocator
 			{
 				// Initialize services that require time to be setup
 				// but do not block main thread. 
-				_ = HandleAsyncInitializations(asyncInitializations);
+				HandleAsyncInitializations(asyncInitializations).Forget();
 			}
 		}
-
-		// TODO: Capture SynchronizationContext.Current in constructor and use ConfigureAwait(false) +
-		// SynchronizationContext.Post here to explicitly marshal ContainerInitialized and
-		// ContainerServicesInitialized back to the main thread instead of relying on implicit capture.
-		private async Task HandleAsyncInitializations(List<Task> asyncInitializations)
+		
+		private async UniTaskVoid HandleAsyncInitializations(List<UniTask> asyncInitializations)
 		{
-			await Task.WhenAll(asyncInitializations);
-			ContainerInitialized = true;
-			ContainerServicesInitialized?.Invoke();
+			try
+			{
+				await UniTask.WhenAll(asyncInitializations);
+				ContainerInitialized = true;
+				ContainerServicesInitialized?.Invoke();
+			}
+			catch (Exception e)
+			{
+				Log.Error(e.ToString());
+			}
 		}
 
 		public override void DisposeContainer()

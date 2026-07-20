@@ -22,9 +22,9 @@ namespace QBS.ServiceLocator
     /// </summary>
     public readonly struct Context : IEquatable<Context>
     {
-        public readonly int Value;
-
         private static readonly Dictionary<int, Context> _contexts = new();
+        
+        public readonly int Value;
 
         public Context(int value)
         {

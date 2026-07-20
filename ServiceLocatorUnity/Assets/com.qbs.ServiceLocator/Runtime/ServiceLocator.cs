@@ -58,7 +58,7 @@ namespace QBS.ServiceLocator
             }
             
             Context.ClearRegisteredContexts();
-            IService.CleanupConfigStateTable();
+            ServiceExtensions.CleanupConfigStateTable();
 
             _sceneServiceContainer?.DisposeContainer();
 
@@ -186,10 +186,29 @@ namespace QBS.ServiceLocator
                         continue;
                     }
 
+                    if (!ImplementsDisposeCorrectly(type))
+                    {
+                        Log.Error($"{type.FullName} implements IDisposable.Dispose directly; implement DisposeService() instead. Skipping registration.");
+                        continue;
+                    }
+
                     _allServicesMap.Add(type, attribute);
                     _serviceContextMap.Add(attribute.ServiceType, attribute.Context);
                 }
             }
+        }
+
+        /// <summary>
+        ///     Checks whether <paramref name="type"/> still relies on <see cref="IService"/>'s default
+        ///     <see cref="IDisposable.Dispose"/> implementation rather than re-implementing it directly,
+        ///     which would bypass service state-table cleanup.
+        /// </summary>
+        private static bool ImplementsDisposeCorrectly(Type type)
+        {
+            var map = type.GetInterfaceMap(typeof(IDisposable));
+            var disposeMethod = typeof(IDisposable).GetMethod(nameof(IDisposable.Dispose));
+            var index = Array.IndexOf(map.InterfaceMethods, disposeMethod);
+            return map.TargetMethods[index].DeclaringType == typeof(IService);
         }
 
         #region Fetching Utilities

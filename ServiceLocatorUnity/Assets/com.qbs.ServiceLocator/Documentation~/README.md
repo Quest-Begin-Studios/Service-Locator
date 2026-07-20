@@ -5,6 +5,7 @@ A reflection-driven Service Locator for Unity with automatic service discovery, 
 ## Table of Contents
 
 - [Overview](#overview)
+- [Installation](#installation)
 - [Core Concepts](#core-concepts)
 - [Global Services](#global-services)
 - [ScopedContext Services](#scopedcontext-services)
@@ -25,11 +26,43 @@ The Service Locator is initialized automatically at `SubsystemRegistration`. Glo
 
 ---
 
+## Installation
+
+This package depends on [UniTask](https://github.com/Cysharp/UniTask), resolved via the [OpenUPM](https://openupm.com/packages/com.cysharp.unitask/) registry. Add the scoped registry to your project's `Packages/manifest.json` once, before installing this package:
+
+```json
+"scopedRegistries": [
+  {
+    "name": "OpenUPM",
+    "url": "https://package.openupm.com",
+    "scopes": [
+      "com.cysharp.unitask"
+    ]
+  }
+]
+```
+
+Without this, Unity Package Manager will not be able to resolve the `com.cysharp.unitask` dependency and the package will fail to compile.
+
+This package also depends on [QBS Core](https://github.com/QuestBeginStudios/QBS-Core). It isn't distributed through a registry, so add it directly to the `dependencies` block of your project's `Packages/manifest.json`:
+
+```json
+"dependencies": {
+  "com.qbs.core": "https://github.com/QuestBeginStudios/QBS-Core.git?path=/CoreUnity/Assets/com.qbs.core"
+}
+```
+
+Unity Package Manager does not resolve git-URL dependencies transitively, so this step can't be skipped even though it's also listed in this package's own `package.json`.
+
+---
+
 ## Core Concepts
 
 ### IService
 
 Every service must implement `IService`. It provides initialization lifecycle hooks, state tracking, and disposal.
+
+`InitializeService`, `InitializeServiceAsync`, and `DisposeService` are `protected internal` members of the interface, so C# requires implementing them via **explicit interface implementation** — not a plain `override` (interfaces don't support `override` for class members at all, and non-public interface members can only be implemented explicitly).
 
 ```csharp
 public interface IMyService : IService
@@ -44,7 +77,7 @@ public class MyService : IMyService
     // false → InitializeService is called
     public bool IsAsyncInit => false;
 
-    protected override bool InitializeService()
+    bool IService.InitializeService()
     {
         // Return false to signal initialization failure.
         return true;
@@ -52,10 +85,10 @@ public class MyService : IMyService
 
     public void DoWork() { }
 
-    protected override void DisposeService()
+    void IService.DisposeService()
     {
         // Optional: clean up resources here.
-        // Do NOT override IDisposable.Dispose — override this instead.
+        // Do NOT implement IDisposable.Dispose — implement this instead.
     }
 }
 ```
@@ -96,7 +129,7 @@ public class SaveService : ISaveService
 {
     public bool IsAsyncInit => false;
 
-    protected override bool InitializeService()
+    bool IService.InitializeService()
     {
         // Load persistent data, etc.
         return true;
@@ -141,7 +174,7 @@ public class PlayerStatsService : IPlayerStatsService
 {
     public bool IsAsyncInit => false;
 
-    protected override bool InitializeService()
+    bool IService.InitializeService()
     {
         // Set up gameplay-specific state.
         return true;
@@ -185,7 +218,7 @@ public class LevelService : MonoBehaviour, ILevelService
         ServiceLocator.RegisterSceneService<ILevelService>(this);
     }
 
-    protected override bool InitializeService()
+    bool IService.InitializeService()
     {
         // Called implicitly when needed, or drive it yourself.
         return true;
@@ -215,7 +248,7 @@ public class RemoteConfigService : IRemoteConfigService
 {
     public bool IsAsyncInit => true;
 
-    protected override async Task<bool> InitializeServiceAsync()
+    async UniTask<bool> IService.InitializeServiceAsync()
     {
         var result = await FetchConfigFromServer();
         return result.Success;
@@ -320,10 +353,10 @@ if (ServiceLocator.TryGetSceneService<ILevelService>(out var level))
 
 ## Disposal
 
-The runtime calls `Dispose()` on every service when its container is purged or the session ends. Override `DisposeService()` for custom cleanup — do **not** re-implement `IDisposable.Dispose` directly, as that bypasses internal state-table cleanup.
+The runtime calls `Dispose()` on every service when its container is purged or the session ends. Implement `DisposeService()` for custom cleanup — do **not** re-implement `IDisposable.Dispose` directly, as that bypasses internal state-table cleanup. Service discovery checks for this and rejects (with a logged error) any service type that does.
 
 ```csharp
-protected override void DisposeService()
+void IService.DisposeService()
 {
     _connection?.Close();
     _buffer?.Dispose();
@@ -369,11 +402,11 @@ protected override void DisposeService()
 | Member | Description |
 |---|---|
 | `bool IsAsyncInit { get; }` | Declare whether this service uses async initialization |
-| `ConfigurationState ConfigState { get; }` | Current init state |
-| `Task<bool> AwaitInitialization(float maxWait)` | Awaits completion; returns `false` on failure or timeout |
-| `protected virtual bool InitializeService()` | Override for synchronous init logic |
-| `protected virtual Task<bool> InitializeServiceAsync()` | Override for asynchronous init logic |
-| `protected virtual void DisposeService()` | Override for custom cleanup |
+| `ConfigurationState GetConfigState()` | Current init state |
+| `UniTask<bool> AwaitInitialization(float maxWait)` | Awaits completion; returns `false` on failure or timeout |
+| `protected internal bool InitializeService()` | Implement (explicit interface implementation) for synchronous init logic |
+| `protected internal UniTask<bool> InitializeServiceAsync()` | Implement (explicit interface implementation) for asynchronous init logic |
+| `protected internal void DisposeService()` | Implement (explicit interface implementation) for custom cleanup |
 
 ---
 
@@ -384,7 +417,7 @@ protected override void DisposeService()
 - Use `Global` for things that truly span the whole session
 - Call `PurgeContainer` when leaving a scoped context to free resources
 - Prefer `TryGet*` in code paths where a service might legitimately be absent
-- Override `DisposeService()` (not `Dispose()`) when your service holds resources
+- Implement `DisposeService()` (not `Dispose()`) when your service holds resources
 
 **Avoid:**
 - Creating circular dependencies between services in the same container; use `AwaitInitialization` if service A must wait for service B
