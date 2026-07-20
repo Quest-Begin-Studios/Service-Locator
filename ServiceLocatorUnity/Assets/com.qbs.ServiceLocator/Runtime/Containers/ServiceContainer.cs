@@ -12,7 +12,6 @@ namespace QBS.ServiceLocator
 	/// </summary>
 	public class ServiceContainer : BaseServiceContainer
 	{
-		public IReadOnlyDictionary<Type, ServiceAttribute> AllServices { get; }
 		public event Action ContainerServicesInitialized;
 
 		public ServiceContainer(Lifetime containerLifetime,
@@ -22,7 +21,7 @@ namespace QBS.ServiceLocator
 			ContainedServices = new Dictionary<Type, IService>();
 			ContainerLifetime = containerLifetime;
 			ContainerContext = context;
-			AllServices = allServices;
+			AllServicesMap = allServices;
 		}
 
 		/// <summary>
@@ -46,7 +45,7 @@ namespace QBS.ServiceLocator
 		/// </summary>
 		private void PopulateMapWithServicesOfLifetime()
 		{
-			foreach (var (actualType, serviceAttribute) in AllServices)
+			foreach (var (actualType, serviceAttribute) in AllServicesMap)
 			{
 				if (serviceAttribute.Lifetime != ContainerLifetime)
 				{

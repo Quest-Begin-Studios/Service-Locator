@@ -153,16 +153,13 @@ ScopedContext services belong to a named game-state scope (e.g., `Gameplay`, `Ma
 
 ### 1. Define contexts
 
-Add a `partial` declaration of `GameContexts` in your own assembly. **Each value must be a unique** `const int` greater than zero.
+Define your own context constants in your own assembly using `const int` values and implicit conversion to `Context`. **Each value must be unique and greater than zero** — `0` is reserved as the unset default.
 
 ```csharp
-namespace QBS.ServiceLocator
+public static class GameContexts
 {
-    public static partial class GameContexts
-    {
-        public const int Gameplay = 1;
-        public const int Settings = 2;
-    }
+    public const int Gameplay = 1;
+    public const int Settings = 2;
 }
 ```
 

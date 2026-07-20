@@ -1,6 +1,6 @@
 using System;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
-using System.Threading;
 using Cysharp.Threading.Tasks;
 using QBS.Core;
 
@@ -123,13 +123,18 @@ namespace QBS.ServiceLocator
                 return state.ConfigState == ConfigurationState.Success;
             }
 
-            var asyncInitTask = state.AsyncInitTask.Value;
-            using var cts = new CancellationTokenSource();
-            await UniTask.WhenAny(asyncInitTask, UniTask.Delay((int) (maxWait * 1000), cancellationToken: cts.Token));
+            // Polls ConfigState instead of re-awaiting state.AsyncInitTask directly: that task is
+            // already being awaited by the container's own HandleAsyncInitializations via UniTask.WhenAll
+            var stopwatch = Stopwatch.StartNew();
+            var maxWaitMilliseconds = (long) (maxWait * 1000);
+            while (state.ConfigState == ConfigurationState.InProgress && stopwatch.ElapsedMilliseconds < maxWaitMilliseconds)
+            {
+                await UniTask.Yield();
+            }
 
             if (state.ConfigState != ConfigurationState.Success)
             {
-                if (asyncInitTask.Status != UniTaskStatus.Pending)
+                if (state.ConfigState == ConfigurationState.Failed)
                 {
                     Log.Error($"Initialization of {service.GetType().FullName} failed");
                 }
@@ -139,7 +144,6 @@ namespace QBS.ServiceLocator
                 }
             }
 
-            cts.Cancel();
             return state.ConfigState == ConfigurationState.Success;
         }
 

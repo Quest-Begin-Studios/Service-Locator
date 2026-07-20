@@ -17,10 +17,13 @@ namespace QBS.ServiceLocator
 
 		public event Action<Type, IService> SceneServiceRegistered;
 
-		public SceneServiceContainer(Dictionary<Type, ServiceAttribute> allServices)
+		// Keyed by ServiceType (the interface, not concrete types) against interfaces
+		private readonly Dictionary<Type, ServiceAttribute> _serviceAttributeMap;
+
+		public SceneServiceContainer(Dictionary<Type, ServiceAttribute> serviceAttributeMap)
 		{
 			ContainedServices = new Dictionary<Type, IService>();
-			AllServicesMap = allServices;
+			_serviceAttributeMap = serviceAttributeMap;
 		}
 
 		public void RegisterService<T>(IService service) where T : class, IService
@@ -32,7 +35,7 @@ namespace QBS.ServiceLocator
 				return;
 			}
 
-			if (!AllServicesMap.TryGetValue(typeof(T), out var serviceAttribute))
+			if (!_serviceAttributeMap.TryGetValue(serviceType, out var serviceAttribute))
 			{
 				Log.Error($"Service {serviceType.FullName} is not marked with an ServiceAttribute");
 				return;

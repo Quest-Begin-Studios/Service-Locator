@@ -22,6 +22,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - `GameContexts` static class removed from the package; application-specific `Context` values are now defined in the consuming project's own assembly (documented in README).
 
+### Fixed
+
+- `DiscoverServicesOfLifetime(ScopedContext, ...)`, `IsContextContainerInitialized`, `FetchContextService`/`TryGetContextService`, and `Subscribe`/`UnsubscribeToContextServiceSetup` threw `NullReferenceException` on a fresh session — the ScopedContext container map was never initialized, only ever nulled out during cleanup. ScopedContext lifetime is now functional from a cold start.
+- `RegisterSceneService<T>(service)` always failed with `"...is not marked with an ServiceAttribute"` when called exactly as documented (registering by interface) — the internal lookup was keyed by concrete implementation type instead of the interface. Scene registration now works via the documented interface-based pattern.
+- `AwaitInitialization` threw `InvalidOperationException: Already continuation registered...` when called on a service the container itself was still concurrently initializing — i.e. the documented "service A waits for service B" use case. It now polls initialization state instead of re-awaiting the same in-flight task from two places at once.
+
 ## [1.0.0] - 2026-05-19
 
 ### Added

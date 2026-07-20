@@ -33,8 +33,13 @@ namespace QBS.ServiceLocator
 
         #endregion
 
-        private static Dictionary<Type, ServiceAttribute> _allServicesMap;
         private static Dictionary<Type, Context> _serviceContextMap;
+        
+        //Type-key (Concrete classes) against ServiceAttributes
+        private static Dictionary<Type, ServiceAttribute> _allServicesConcreteMap;
+        
+        //Type-key (Interfaces) against ServiceAttributes
+        private static Dictionary<Type, ServiceAttribute> _allServicesInterfaceMap;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
         public static void GameStart()
@@ -46,7 +51,7 @@ namespace QBS.ServiceLocator
 
         private static void CleanupStatics()
         {
-            _allServicesMap?.Clear();
+            _allServicesConcreteMap?.Clear();
             _globalServiceContainer?.DisposeContainer();
 
             if (_contextServiceContainers != null)
@@ -62,9 +67,9 @@ namespace QBS.ServiceLocator
 
             _sceneServiceContainer?.DisposeContainer();
 
-            _allServicesMap = null;
+            _allServicesConcreteMap = null;
             _globalServiceContainer = null;
-            _contextServiceContainers = null;
+            _contextServiceContainers = new Dictionary<Context, ServiceContainer>();
             _sceneServiceContainer = null;
         }
 
@@ -135,7 +140,7 @@ namespace QBS.ServiceLocator
                     var newContextContainer = new ServiceContainer
                     (
                         Lifetime.ScopedContext,
-                        _allServicesMap,
+                        _allServicesConcreteMap,
                         context
                     );
                     
@@ -152,7 +157,7 @@ namespace QBS.ServiceLocator
                         return;
                     }
 
-                    _globalServiceContainer = new ServiceContainer(Lifetime.Global, _allServicesMap);
+                    _globalServiceContainer = new ServiceContainer(Lifetime.Global, _allServicesConcreteMap);
                     _globalServiceContainer.OnEnteredContainerLifetime();
                     break;
                 }
@@ -161,8 +166,9 @@ namespace QBS.ServiceLocator
 
         private static void GetAllServiceAttributedTypes()
         {
-            _allServicesMap = new Dictionary<Type, ServiceAttribute>();
+            _allServicesConcreteMap = new Dictionary<Type, ServiceAttribute>();
             _serviceContextMap = new Dictionary<Type, Context>();
+            _allServicesInterfaceMap = new Dictionary<Type, ServiceAttribute>();
             var assemblies = CurrentAssemblies.GetLoadedAssemblies();
 
             foreach (var assembly in assemblies)
@@ -192,8 +198,9 @@ namespace QBS.ServiceLocator
                         continue;
                     }
 
-                    _allServicesMap.Add(type, attribute);
+                    _allServicesConcreteMap.Add(type, attribute);
                     _serviceContextMap.Add(attribute.ServiceType, attribute.Context);
+                    _allServicesInterfaceMap.Add(attribute.ServiceType, attribute);
                 }
             }
         }
@@ -292,7 +299,7 @@ namespace QBS.ServiceLocator
         {
             //Force dispose scene container
             _sceneServiceContainer?.DisposeContainer();
-            _sceneServiceContainer = new SceneServiceContainer(_allServicesMap);
+            _sceneServiceContainer = new SceneServiceContainer(_allServicesInterfaceMap);
         }
 
         public static void SubscribeToContextServiceSetup(Context context, Action onSetup)
