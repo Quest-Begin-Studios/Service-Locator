@@ -80,8 +80,11 @@ namespace QBS.ServiceLocator
 				}
 				catch (Exception e)
 				{
-					Log.Error(e.ToString());
-					throw;
+					//Skip the offending service rather than rethrow: this runs under
+					//RuntimeInitializeOnLoadMethod, so propagating takes down the whole boot sequence
+					//and leaves every remaining service in this container unregistered.
+					Log.Error($"Exception constructing {actualType.FullName}, skipping registration: {e}");
+					continue;
 				}
 			}
 		}

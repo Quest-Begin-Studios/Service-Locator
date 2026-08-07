@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using NUnit.Framework;
+using UnityEngine.SceneManagement;
 using UnityEngine.TestTools;
 
 namespace QBS.ServiceLocator.Tests
@@ -45,7 +46,7 @@ namespace QBS.ServiceLocator.Tests
             {
                 { typeof(ISceneTestService), new ServiceAttribute(Lifetime.Scene, typeof(ISceneTestService)) },
             };
-            return new SceneServiceContainer(allServices);
+            return new SceneServiceContainer(allServices, SceneManager.GetActiveScene());
         }
 
         [Test]
@@ -53,6 +54,15 @@ namespace QBS.ServiceLocator.Tests
         {
             var container = BuildContainer();
             Assert.IsTrue(container.ContainerInitialized);
+        }
+
+        [Test]
+        public void Scene_ReportsTheSceneItWasConstructedWith()
+        {
+            var scene = SceneManager.GetActiveScene();
+            var container = BuildContainer();
+
+            Assert.AreEqual(scene, container.Scene);
         }
 
         [Test]
@@ -95,7 +105,7 @@ namespace QBS.ServiceLocator.Tests
         public void RegisterService_TypeWithoutServiceAttribute_DoesNotRegister()
         {
             LogAssert.ignoreFailingMessages = true;
-            var container = new SceneServiceContainer(new Dictionary<Type, ServiceAttribute>());
+            var container = new SceneServiceContainer(new Dictionary<Type, ServiceAttribute>(), SceneManager.GetActiveScene());
 
             container.RegisterService<ISceneTestService>(new SceneTestService());
 
@@ -110,11 +120,59 @@ namespace QBS.ServiceLocator.Tests
             {
                 { typeof(ISceneTestService), new ServiceAttribute(Lifetime.Global, typeof(ISceneTestService)) },
             };
-            var container = new SceneServiceContainer(allServices);
+            var container = new SceneServiceContainer(allServices, SceneManager.GetActiveScene());
 
             container.RegisterService<ISceneTestService>(new SceneTestService());
 
             Assert.IsFalse(container.TryGetService<ISceneTestService>(out _));
+        }
+
+        [Test]
+        public void RegisterService_PersistentContainer_RejectsAnOrdinarySceneService()
+        {
+            // The two scene lifetimes are not interchangeable in either direction — that is what stops one
+            // interface from ending up live in both a scene container and the persistent one at once.
+            LogAssert.ignoreFailingMessages = true;
+            var allServices = new Dictionary<Type, ServiceAttribute>
+            {
+                { typeof(ISceneTestService), new ServiceAttribute(Lifetime.Scene, typeof(ISceneTestService)) },
+            };
+            var container = new SceneServiceContainer(allServices, SceneManager.GetActiveScene(), Lifetime.PersistentScene);
+
+            container.RegisterService<ISceneTestService>(new SceneTestService());
+
+            Assert.IsFalse(container.TryGetService<ISceneTestService>(out _));
+        }
+
+        [Test]
+        public void RegisterService_SceneContainer_RejectsAPersistentSceneService()
+        {
+            LogAssert.ignoreFailingMessages = true;
+            var allServices = new Dictionary<Type, ServiceAttribute>
+            {
+                { typeof(ISceneTestService), new ServiceAttribute(Lifetime.PersistentScene, typeof(ISceneTestService)) },
+            };
+            var container = new SceneServiceContainer(allServices, SceneManager.GetActiveScene());
+
+            container.RegisterService<ISceneTestService>(new SceneTestService());
+
+            Assert.IsFalse(container.TryGetService<ISceneTestService>(out _));
+        }
+
+        [Test]
+        public void RegisterService_PersistentContainer_AcceptsAPersistentSceneService()
+        {
+            var allServices = new Dictionary<Type, ServiceAttribute>
+            {
+                { typeof(ISceneTestService), new ServiceAttribute(Lifetime.PersistentScene, typeof(ISceneTestService)) },
+            };
+            var container = new SceneServiceContainer(allServices, SceneManager.GetActiveScene(), Lifetime.PersistentScene);
+
+            var service = new SceneTestService();
+            container.RegisterService<ISceneTestService>(service);
+
+            Assert.IsTrue(container.TryGetService<ISceneTestService>(out var retrieved));
+            Assert.AreSame(service, retrieved);
         }
 
         [Test]
@@ -128,7 +186,7 @@ namespace QBS.ServiceLocator.Tests
             {
                 { typeof(IOtherSceneTestService), new ServiceAttribute(Lifetime.Scene, typeof(IOtherSceneTestService)) },
             };
-            var container = new SceneServiceContainer(allServices);
+            var container = new SceneServiceContainer(allServices, SceneManager.GetActiveScene());
 
             container.RegisterService<IOtherSceneTestService>(new SceneTestService());
 

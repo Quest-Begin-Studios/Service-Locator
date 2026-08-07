@@ -1,8 +1,8 @@
 {
   "name": "com.qbs.service-locator",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "displayName": "QBS Service Locator",
-  "description": "Lightweight, reflection-driven Service Locator for Unity. Provides automatic service discovery via attributes, three lifetime scopes (Global, ScopedContext, Scene), parallel async initialization, and clean editor play-session resets.",
+  "description": "Lightweight, reflection-driven Service Locator for Unity. Provides automatic service discovery via attributes, four lifetime scopes (Global, ScopedContext, Scene, PersistentScene), parallel async initialization, and clean editor play-session resets.",
   "unity": "6000.0",
   "dependencies": {
     "com.cysharp.unitask": "2.5.11",

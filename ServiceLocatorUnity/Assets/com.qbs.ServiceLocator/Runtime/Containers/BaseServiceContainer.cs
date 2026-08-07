@@ -7,7 +7,8 @@ namespace QBS.ServiceLocator
 	/// <summary>
 	/// Defines the lifetime scope of a service, determining when it is created and destroyed.
 	/// Services can be Global (application lifetime), Scene (per-scene lifetime),
-	/// ScopedContext (custom context lifetime), or None (invalid/unset).
+	/// PersistentScene (an authored GameObject that outlives every scene), ScopedContext
+	/// (custom context lifetime), or None (invalid/unset).
 	/// </summary>
 	public enum Lifetime
 	{
@@ -15,6 +16,7 @@ namespace QBS.ServiceLocator
 		Scene,
 		ScopedContext,
 		Global,
+		PersistentScene,
 	}
 
 	/// <summary>

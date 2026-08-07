@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using Cysharp.Threading.Tasks;
 using NUnit.Framework;
+using UnityEngine.SceneManagement;
 using UnityEngine.TestTools;
 
 namespace QBS.ServiceLocator.Tests
@@ -65,6 +66,26 @@ namespace QBS.ServiceLocator.Tests
         }
     }
 
+    public interface IDuplicateTestService : IService
+    {
+    }
+
+    // Two concrete types claiming one ServiceType — the real mock/editor-implementation shape.
+    // Discovery must log and skip the loser; a bare dictionary Add would throw out of
+    // [RuntimeInitializeOnLoadMethod] and abandon every other service in the scan.
+    // These deliberately stay registered, so the collision is exercised on every GameStart.
+    [Service(Lifetime.Global, typeof(IDuplicateTestService))]
+    public class DuplicateTestServiceA : IDuplicateTestService
+    {
+        public bool IsAsyncInit => false;
+    }
+
+    [Service(Lifetime.Global, typeof(IDuplicateTestService))]
+    public class DuplicateTestServiceB : IDuplicateTestService
+    {
+        public bool IsAsyncInit => false;
+    }
+
     public interface IScopedSyncTestService : IService
     {
     }
@@ -119,10 +140,16 @@ namespace QBS.ServiceLocator.Tests
     public class SceneLocatorTestService : ISceneLocatorTestService
     {
         public bool IsAsyncInit => false;
+        public int DisposeCallCount { get; private set; }
 
         bool IService.InitializeService()
         {
             return true;
+        }
+
+        void IService.DisposeService()
+        {
+            DisposeCallCount++;
         }
     }
 
@@ -152,6 +179,28 @@ namespace QBS.ServiceLocator.Tests
         public void GameStart_RejectsServiceThatReimplementsDisposeDirectly()
         {
             Assert.IsFalse(ServiceLocator.TryGetGlobalService<IBadDisposeTestService>(out _));
+        }
+
+        [Test]
+        public void GameStart_TwoTypesClaimingOneServiceType_KeepsOneWithoutAbortingDiscovery()
+        {
+            // [SetUp]'s GameStart() already scanned both DuplicateTestService types. The assertion that
+            // matters is that discovery survived it: an unguarded Add would have thrown mid-scan and left
+            // every service after the collision — including IGreeterTestService — unregistered.
+            Assert.IsTrue(ServiceLocator.TryGetGlobalService<IDuplicateTestService>(out var duplicate));
+            Assert.IsNotNull(duplicate);
+            Assert.IsTrue(ServiceLocator.TryGetGlobalService<IGreeterTestService>(out _));
+        }
+
+        [Test]
+        public void TryGetContextService_ForANonScopedService_ReturnsFalseInsteadOfThrowing()
+        {
+            // IGreeterTestService is Global, so it has no context at all. While every lifetime was written
+            // into the context map it landed on Context 0 and sent this lookup into a container that is
+            // never created, throwing out of a method whose whole contract is not to.
+            Assert.IsFalse(ServiceLocator.TryGetContextService<IGreeterTestService>(out var service));
+            Assert.IsNull(service);
+            Assert.IsNull(ServiceLocator.FetchContextService<IGreeterTestService>());
         }
 
         [Test]
@@ -291,53 +340,138 @@ namespace QBS.ServiceLocator.Tests
         }
 
         [Test]
-        public void FetchContextService_AfterPurgingItsContext_ThrowsKeyNotFoundException()
+        public void FetchContextService_AfterPurgingItsContext_FailsSafeInsteadOfThrowing()
         {
-            // KNOWN GAP: PurgeContainer(ScopedContext, context) removes the container from
-            // _contextServiceContainers, but _serviceContextMap (built once at discovery time)
-            // still points this service type at that context, so the raw dictionary indexer
-            // throws instead of failing safe. TryGetContextService shares the same indexer and
-            // the same risk. Documents current behavior, not desired behavior.
+            // _serviceContextMap is built once at discovery, so it still points this service type at 42003
+            // after the purge took that container away. Both accessors have to fail safe on the dangling
+            // reference rather than index straight into a map that no longer holds the key.
+            LogAssert.ignoreFailingMessages = true;
             ServiceLocator.DiscoverServicesOfLifetime(Lifetime.ScopedContext, 42003);
             Assert.IsTrue(ServiceLocator.TryGetContextService<IScopedPurgeTestService>(out _));
 
             ServiceLocator.PurgeContainer(Lifetime.ScopedContext, 42003);
 
-            Assert.Throws<KeyNotFoundException>(() => ServiceLocator.FetchContextService<IScopedPurgeTestService>());
+            Assert.IsNull(ServiceLocator.FetchContextService<IScopedPurgeTestService>());
+            Assert.IsFalse(ServiceLocator.TryGetContextService<IScopedPurgeTestService>(out _));
+        }
+
+        [Test]
+        public void RegisterSceneService_WithExplicitScene_CreatesThatScenesContainerLazily()
+        {
+            var scene = SceneManager.GetActiveScene();
+            Assert.IsFalse(ServiceLocator.IsSceneContainerInitialized(scene));
+
+            ServiceLocator.RegisterSceneService<ISceneLocatorTestService>(new SceneLocatorTestService(), scene);
+
+            Assert.IsTrue(ServiceLocator.IsSceneContainerInitialized(scene));
+            Assert.IsTrue(ServiceLocator.TryGetSceneService<ISceneLocatorTestService>(scene, out var registered));
+            Assert.AreSame(registered, ServiceLocator.FetchSceneService<ISceneLocatorTestService>(scene));
+        }
+
+        [Test]
+        public void RegisterSceneService_NullService_IsRejectedRatherThanStored()
+        {
+            // A stored null goes unnoticed until DisposeContainer walks the map and dereferences it,
+            // by which point nothing points back at the registration that put it there.
+            LogAssert.ignoreFailingMessages = true;
+            var scene = SceneManager.GetActiveScene();
+
+            ServiceLocator.RegisterSceneService<ISceneLocatorTestService>(null, scene);
+
+            Assert.IsFalse(ServiceLocator.IsSceneContainerInitialized(scene));
+            Assert.IsFalse(ServiceLocator.TryGetSceneService<ISceneLocatorTestService>(scene, out _));
+            Assert.DoesNotThrow(() => ServiceLocator.PurgeContainer(Lifetime.Scene));
+        }
+
+        [Test]
+        public void RegisterSceneService_NonComponentWithoutExplicitScene_DoesNotRegister()
+        {
+            // A non-Component service has no gameObject.scene to infer from, so the single-argument
+            // overload must reject it rather than guess a scene.
+            LogAssert.ignoreFailingMessages = true;
+            var scene = SceneManager.GetActiveScene();
+
+            Assert.DoesNotThrow(() =>
+                ServiceLocator.RegisterSceneService<ISceneLocatorTestService>(new SceneLocatorTestService()));
+
+            Assert.IsFalse(ServiceLocator.IsSceneContainerInitialized(scene));
+        }
+
+        [Test]
+        public void FetchSceneService_SceneWithoutContainer_ReturnsNull()
+        {
+            Assert.IsNull(ServiceLocator.FetchSceneService<ISceneLocatorTestService>(SceneManager.GetActiveScene()));
+        }
+
+        [Test]
+        public void DisposeSceneContainer_DisposesServicesAndDropsTheContainer()
+        {
+            var scene = SceneManager.GetActiveScene();
+            var service = new SceneLocatorTestService();
+            ServiceLocator.RegisterSceneService<ISceneLocatorTestService>(service, scene);
+
+            ServiceLocator.DisposeSceneContainer(scene);
+
+            Assert.AreEqual(1, service.DisposeCallCount);
+            Assert.IsFalse(ServiceLocator.IsSceneContainerInitialized(scene));
+            Assert.IsFalse(ServiceLocator.TryGetSceneService<ISceneLocatorTestService>(scene, out _));
+        }
+
+        [Test]
+        public void DisposeSceneContainer_SceneWithoutContainer_IsANoOp()
+        {
+            Assert.DoesNotThrow(() => ServiceLocator.DisposeSceneContainer(SceneManager.GetActiveScene()));
         }
 
         [Test]
         public void PurgeContainer_Scene_IsSafeAndClearsState()
         {
-            ServiceLocator.RefreshSceneServiceContainer();
-            ServiceLocator.RegisterSceneService<ISceneLocatorTestService>(new SceneLocatorTestService());
-            Assert.IsTrue(ServiceLocator.TryGetSceneService<ISceneLocatorTestService>(out _));
+            var scene = SceneManager.GetActiveScene();
+            ServiceLocator.RegisterSceneService<ISceneLocatorTestService>(new SceneLocatorTestService(), scene);
+            Assert.IsTrue(ServiceLocator.TryGetSceneService<ISceneLocatorTestService>(scene, out _));
 
             ServiceLocator.PurgeContainer(Lifetime.Scene);
 
-            Assert.IsFalse(ServiceLocator.IsSceneContainerInitialized);
-            Assert.IsFalse(ServiceLocator.TryGetSceneService<ISceneLocatorTestService>(out _));
+            Assert.IsFalse(ServiceLocator.IsSceneContainerInitialized(scene));
+            Assert.IsFalse(ServiceLocator.TryGetSceneService<ISceneLocatorTestService>(scene, out _));
         }
 
         [Test]
-        public void RefreshSceneServiceContainer_ReplacesPreviousRegistrations()
+        public void SceneContainerEvents_FireWithTheOwningSceneAndService()
         {
-            ServiceLocator.RefreshSceneServiceContainer();
-            ServiceLocator.RegisterSceneService<ISceneLocatorTestService>(new SceneLocatorTestService());
-            Assert.IsTrue(ServiceLocator.TryGetSceneService<ISceneLocatorTestService>(out _));
+            var scene = SceneManager.GetActiveScene();
+            var created = new List<Scene>();
+            var disposed = new List<Scene>();
+            (Scene Scene, Type Type, IService Service) registered = default;
 
-            ServiceLocator.RefreshSceneServiceContainer();
+            ServiceLocator.SceneContainerCreated += s => created.Add(s);
+            ServiceLocator.SceneContainerDisposed += s => disposed.Add(s);
+            ServiceLocator.SceneServiceRegistered += (s, t, i) => registered = (s, t, i);
 
-            Assert.IsFalse(ServiceLocator.TryGetSceneService<ISceneLocatorTestService>(out _));
-            Assert.IsTrue(ServiceLocator.IsSceneContainerInitialized);
+            var service = new SceneLocatorTestService();
+            ServiceLocator.RegisterSceneService<ISceneLocatorTestService>(service, scene);
+            ServiceLocator.DisposeSceneContainer(scene);
+
+            CollectionAssert.AreEqual(new[] { scene }, created);
+            CollectionAssert.AreEqual(new[] { scene }, disposed);
+            Assert.AreEqual(scene, registered.Scene);
+            Assert.AreEqual(typeof(ISceneLocatorTestService), registered.Type);
+            Assert.AreSame(service, registered.Service);
         }
 
         [Test]
-        public void RegisterSceneService_BeforeContainerExists_DoesNotThrow()
+        public void SceneContainerCreated_FiresOncePerScene_NotPerRegistration()
         {
             LogAssert.ignoreFailingMessages = true;
-            Assert.DoesNotThrow(() =>
-                ServiceLocator.RegisterSceneService<ISceneLocatorTestService>(new SceneLocatorTestService()));
+            var scene = SceneManager.GetActiveScene();
+            var createdCount = 0;
+            ServiceLocator.SceneContainerCreated += _ => createdCount++;
+
+            ServiceLocator.RegisterSceneService<ISceneLocatorTestService>(new SceneLocatorTestService(), scene);
+            ServiceLocator.RegisterSceneService<ISceneLocatorTestService>(new SceneLocatorTestService(), scene);
+
+            Assert.AreEqual(1, createdCount);
         }
+
     }
 }

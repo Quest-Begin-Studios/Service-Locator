@@ -1,6 +1,6 @@
 # QBS Service Locator — Usage Guide
 
-A reflection-driven Service Locator for Unity with automatic service discovery, three lifetime scopes, and first-class support for async initialization.
+A reflection-driven Service Locator for Unity with automatic service discovery, four lifetime scopes, and first-class support for async initialization.
 
 ## Table of Contents
 
@@ -22,7 +22,7 @@ A reflection-driven Service Locator for Unity with automatic service discovery, 
 
 ## Overview
 
-The Service Locator is initialized automatically at `SubsystemRegistration`. Global services are discovered and started immediately. ScopedContext and Scene containers are created on demand by your own code when entering the appropriate game state or scene.
+The Service Locator is initialized automatically at `SubsystemRegistration`. Global services are discovered and started immediately. ScopedContext containers are created on demand by your own code when entering the appropriate game state. Scene containers — one per loaded scene — are created on that scene's first service registration and disposed by your own code when you tear the scene down.
 
 ---
 
@@ -98,12 +98,14 @@ public class MyService : IMyService
 Marks a class for automatic discovery. The attribute specifies the **lifetime scope** and the **interface type** under which the service is registered.
 
 ```csharp
-// Global or Scene lifetime — pass the Lifetime enum value
+// Global, Scene or PersistentScene lifetime — pass the Lifetime enum value
 [ServiceAttribute(Lifetime.Global, typeof(IMyService))]
 
 // ScopedContext lifetime — pass an int context constant (implicit conversion to Context)
 [ServiceAttribute(GameContexts.Gameplay, typeof(IMyService))]
 ```
+
+The attribute is the **single source of truth** for a service's lifetime — registration validates against it and refuses a mismatch, rather than letting the call site decide.
 
 ### ConfigurationState
 
@@ -200,6 +202,8 @@ ServiceLocator.PurgeContainer(Lifetime.ScopedContext, GameContexts.Gameplay);
 
 Scene services are **not** auto-discovered. A scene's MonoBehaviours register themselves manually. This allows the scene hierarchy to own the service instances directly.
 
+**There is one container per loaded scene.** The container for a scene is created on that scene's first registration, so nothing needs setting up before a scene's objects register. Tearing it down is yours to drive: call `DisposeSceneContainer(scene)` before you unload the scene.
+
 ```csharp
 [ServiceAttribute(Lifetime.Scene, typeof(ILevelService))]
 public class LevelService : MonoBehaviour, ILevelService
@@ -208,10 +212,7 @@ public class LevelService : MonoBehaviour, ILevelService
 
     void Awake()
     {
-        // Create a fresh scene container (disposes any previous one).
-        ServiceLocator.RefreshSceneServiceContainer();
-
-        // Self-register with the container.
+        // Registers into this component's own scene, creating that scene's container if needed.
         ServiceLocator.RegisterSceneService<ILevelService>(this);
     }
 
@@ -223,15 +224,83 @@ public class LevelService : MonoBehaviour, ILevelService
 }
 ```
 
-**Retrieve from other scene objects:**
+**Retrieve from other scene objects** — pass `this`, and the caller's own scene is used:
 
 ```csharp
-var level = ServiceLocator.FetchSceneService<ILevelService>();
+var level = ServiceLocator.FetchSceneService<ILevelService>(this);
 ```
 
 Scene containers always report `ContainerInitialized = true` immediately after creation; each service manages its own initialization timing.
 
 **Good candidates:** level managers, scene-specific controllers, per-scene configuration.
+
+### Resolution contract
+
+Scene resolution is a deterministic `(Scene, Type)` lookup, and it is **strictly local**: a scene's container is never searched on behalf of another scene, and there is no fallback to a "current" scene. Two additively-loaded scenes may each register the same interface; the two instances are independent and unambiguous.
+
+```csharp
+// Primary — an explicit scene.
+var level = ServiceLocator.FetchSceneService<ILevelService>(someScene);
+
+// Ergonomic — infers someComponent.gameObject.scene.
+var level = ServiceLocator.FetchSceneService<ILevelService>(this);
+```
+
+Both return `null` when that scene has no container. `TryGetSceneService` has the same two overloads and returns `false` instead.
+
+**Non-MonoBehaviour callers must pass an explicit `Scene`.** A non-MonoBehaviour resolving a scene service is discouraged — it almost always wants a `Global` or `ScopedContext` service instead. If one genuinely needs a scene service, it must be handed the `Scene` it belongs to and pass it explicitly; the same applies to registration, via `RegisterSceneService<T>(service, scene)`.
+
+### Lifetime and disposal
+
+| Trigger | Effect |
+|---|---|
+| First `RegisterSceneService` for a scene | That scene's container is created; `SceneContainerCreated` fires |
+| `DisposeSceneContainer(scene)` | Disposes only that scene's services and drops its container; `SceneContainerDisposed` fires |
+| `PurgeContainer(Lifetime.Scene)` | Disposes **every** scene container, the persistent one included |
+| `PurgeContainer(Lifetime.PersistentScene)` | Disposes only the persistent container, leaving ordinary scenes alone |
+
+**The locator does not watch `SceneManager.sceneUnloaded`.** Deciding when a scene's services die is the job of whatever owns the scene load — the same division as `PurgeContainer` for a ScopedContext. Call `DisposeSceneContainer(scene)` yourself, and call it *before* `UnloadSceneAsync`: at that point the scene's GameObjects are still alive, so a MonoBehaviour service's `DisposeService()` can still touch Unity state. (Had the package hooked `sceneUnloaded`, disposal would always land after `OnDestroy`, with every service already destroyed.)
+
+The flip side is that a container you never dispose outlives its scene, keyed by a `Scene` handle that Unity is free to recycle — a later scene reusing that handle would inherit the stale container. Treat "dispose before you unload" as a hard contract, not a nicety.
+
+### Persistent scene services
+
+Some services have to be GameObjects but must not die with a scene — a loading overlay that draws over everything, an audio rig built from `AudioSource`s. Making them ordinary scene services forces a copy into every scene, and `Global`/`ScopedContext` can't help because those are reflection-instantiated POCOs.
+
+Mark them `Lifetime.PersistentScene` instead. They live in Unity's `DontDestroyOnLoad` scene, which is just another scene as far as the container model is concerned — so this reuses the same container, keyed by that scene:
+
+```csharp
+[ServiceAttribute(Lifetime.PersistentScene, typeof(ILoaderService))]
+public class LoaderScreen : MonoBehaviour, ILoaderService
+{
+    void Awake()
+    {
+        // Moves this object to DontDestroyOnLoad and registers it there.
+        ServiceLocator.RegisterPersistentSceneService<ILoaderService>(this);
+    }
+}
+```
+
+```csharp
+var loader = ServiceLocator.FetchPersistentSceneService<ILoaderService>();
+```
+
+- **`Lifetime.PersistentScene` and `Lifetime.Scene` are not interchangeable.** `RegisterSceneService` refuses a `PersistentScene` service and `RegisterPersistentSceneService` refuses a `Scene` one, so the attribute — not the call site — decides how long a service lives, and one interface cannot end up live in a scene container *and* the persistent container at once.
+- **You don't call `DontDestroyOnLoad` yourself** — registration does it, so there is no ordering to get wrong and no way to end up with a "persistent" service that still dies with its scene. Re-registering something already there is a harmless no-op move.
+- **A refused registration is never moved.** Every check runs before the `DontDestroyOnLoad` call, because that move can't be undone: a rejected object that had already been moved would sit outside every scene, alive and unreachable, for the rest of the session.
+- **The service must be on a root GameObject**, because Unity only honours `DontDestroyOnLoad` for roots. A nested component is rejected with an error rather than silently left behind in a scene that unloads.
+- **Resolution is a separate, explicit call.** `FetchSceneService<T>(scene)` will *not* find a persistent service, and `FetchPersistentSceneService<T>()` will not find an ordinary one. Ordinary scene resolution stays a strictly local `(Scene, Type)` answer, and reaching across the boundary is visible at the call site.
+- **Lifetime is Unity's.** Nothing unloads the DDOL scene, so the persistent container lives until `PurgeContainer(Lifetime.PersistentScene)`, `PurgeContainer(Lifetime.Scene)`, or a session reset. Unity exposes no handle for that scene, so the locator learns it from the first accepted persistent registration and forgets it again on the next session.
+
+### Cross-scene indexes
+
+If a consumer needs a registry spanning scenes, build it on the package's events rather than on cross-scene fallback:
+
+```csharp
+ServiceLocator.SceneContainerCreated  += scene => { /* ... */ };
+ServiceLocator.SceneContainerDisposed += scene => { /* drop this scene's entries */ };
+ServiceLocator.SceneServiceRegistered += (scene, serviceType, service) => { /* index it */ };
+```
 
 ---
 
@@ -330,7 +399,7 @@ if (ServiceLocator.TryGetContextService<IPlayerStatsService>(out var stats))
     stats.AddScore(100);
 }
 
-if (ServiceLocator.TryGetSceneService<ILevelService>(out var level))
+if (ServiceLocator.TryGetSceneService<ILevelService>(this, out var level))
 {
     level.LoadNextWave();
 }
@@ -343,7 +412,7 @@ if (ServiceLocator.TryGetSceneService<ILevelService>(out var level))
 | Property / Method | Returns |
 |---|---|
 | `IsGlobalContainerInitialized` | `true` once all global services have finished initializing |
-| `IsSceneContainerInitialized` | `true` once a scene container has been created |
+| `IsSceneContainerInitialized(scene)` | `true` once that scene's container has been created and not yet disposed |
 | `IsContextContainerInitialized(context)` | `true` once all services in that context have finished |
 
 ---
@@ -371,26 +440,35 @@ void IService.DisposeService()
 | Method | Description |
 |---|---|
 | `FetchGlobalService<T>()` | Returns the Global service; throws `KeyNotFoundException` if missing |
-| `FetchContextService<T>()` | Returns the service from its registered context container |
-| `FetchSceneService<T>()` | Returns the service from the current scene container |
+| `FetchContextService<T>()` | Returns the service from its registered context container; `null` if that context has no live container, `KeyNotFoundException` if the container has no such service |
+| `FetchSceneService<T>(scene)` | Returns the service from that scene's container; `null` if the scene has no container |
+| `FetchSceneService<T>(component)` | Same, resolving `component.gameObject.scene` |
+| `FetchPersistentSceneService<T>()` | Returns the service from the `DontDestroyOnLoad` container; `null` if none registered |
 | `TryGetGlobalService<T>(out T)` | Safe variant — returns `false` if not found |
 | `TryGetContextService<T>(out T)` | Safe variant — returns `false` if not found |
-| `TryGetSceneService<T>(out T)` | Safe variant — returns `false` if not found |
+| `TryGetSceneService<T>(scene, out T)` | Safe variant — returns `false` if not found |
+| `TryGetSceneService<T>(component, out T)` | Same, resolving `component.gameObject.scene` |
+| `TryGetPersistentSceneService<T>(out T)` | Safe variant — returns `false` if not found |
 
 #### Container management
 
 | Method | Description |
 |---|---|
 | `DiscoverServicesOfLifetime(lifetime, context)` | Creates and initializes a container for the given scope |
-| `PurgeContainer(lifetime, context)` | Disposes and removes the container for the given scope |
-| `RefreshSceneServiceContainer()` | Disposes any existing scene container and creates a fresh one |
-| `RegisterSceneService<T>(service)` | Manually registers a scene service instance |
+| `PurgeContainer(lifetime, context)` | Disposes and removes the container for the given scope; `Lifetime.Scene` disposes every scene container, `Lifetime.PersistentScene` only the persistent one |
+| `RegisterSceneService<T>(service)` | Registers a `Lifetime.Scene` service into its own `Component`'s scene, creating that container if needed |
+| `RegisterSceneService<T>(service, scene)` | Registers against an explicit scene — required for non-`Component` services |
+| `RegisterPersistentSceneService<T>(service)` | Validates a `Lifetime.PersistentScene` service, then moves its root GameObject to `DontDestroyOnLoad` and registers it there |
+| `DisposeSceneContainer(scene)` | Disposes just that scene's services; call it before unloading the scene |
 
 #### Events
 
 | Member | Description |
 |---|---|
 | `GlobalServicesInitialized` | Fires when the Global container finishes initializing |
+| `SceneContainerCreated` | `Action<Scene>` — fires when a scene's container is created |
+| `SceneContainerDisposed` | `Action<Scene>` — fires after a scene's container and services are disposed |
+| `SceneServiceRegistered` | `Action<Scene, Type, IService>` — fires per scene service registration |
 | `SubscribeToContextServiceSetup(context, action)` | Subscribe to a specific context container's init event |
 | `UnsubscribeToContextServiceSetup(context, action)` | Unsubscribe from a context container's init event |
 
@@ -419,5 +497,6 @@ void IService.DisposeService()
 **Avoid:**
 - Creating circular dependencies between services in the same container; use `AwaitInitialization` if service A must wait for service B
 - Storing references to Scene-lifetime services across scene loads
+- Reaching into another scene's services; coordinate through a `Global`/`ScopedContext` service or an orchestrator instead
 - Using the ServiceLocator in static constructors — `GameStart` may not have run yet
 - Values of `0` for context constants — it is reserved as the "no context" default
