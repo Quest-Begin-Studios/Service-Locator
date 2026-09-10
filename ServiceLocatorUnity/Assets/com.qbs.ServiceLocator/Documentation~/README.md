@@ -44,11 +44,11 @@ This package depends on [UniTask](https://github.com/Cysharp/UniTask), resolved 
 
 Without this, Unity Package Manager will not be able to resolve the `com.cysharp.unitask` dependency and the package will fail to compile.
 
-This package also depends on [QBS Core](https://github.com/QuestBeginStudios/QBS-Core). It isn't distributed through a registry, so add it directly to the `dependencies` block of your project's `Packages/manifest.json`:
+This package also depends on [QBS Core](https://github.com/Quest-Begin-Studios/QBS-Core). It isn't distributed through a registry, so add it directly to the `dependencies` block of your project's `Packages/manifest.json`:
 
 ```json
 "dependencies": {
-  "com.qbs.core": "https://github.com/QuestBeginStudios/QBS-Core.git?path=/CoreUnity/Assets/com.qbs.core"
+  "com.qbs.core": "https://github.com/Quest-Begin-Studios/QBS-Core.git?path=/CoreUnity/Assets/com.qbs.core"
 }
 ```
 

@@ -6,7 +6,7 @@
   "unity": "6000.0",
   "dependencies": {
     "com.cysharp.unitask": "2.5.11",
-    "com.qbs.core": "https://github.com/QuestBeginStudios/QBS-Core.git?path=/CoreUnity/Assets/com.qbs.core"
+    "com.qbs.core": "https://github.com/Quest-Begin-Studios/QBS-Core.git?path=/CoreUnity/Assets/com.qbs.core"
   },
   "keywords": [
     "service-locator",

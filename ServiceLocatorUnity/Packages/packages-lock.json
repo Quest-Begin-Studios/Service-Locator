@@ -8,7 +8,7 @@
       "url": "https://package.openupm.com"
     },
     "com.qbs.core": {
-      "version": "https://github.com/QuestBeginStudios/QBS-Core.git?path=/CoreUnity/Assets/com.qbs.core",
+      "version": "https://github.com/Quest-Begin-Studios/QBS-Core.git?path=/CoreUnity/Assets/com.qbs.core",
       "depth": 0,
       "source": "git",
       "dependencies": {},
