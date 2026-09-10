@@ -54,6 +54,8 @@ This package also depends on [QBS Core](https://github.com/QuestBeginStudios/QBS
 
 Unity Package Manager does not resolve git-URL dependencies transitively, so this step can't be skipped even though it's also listed in this package's own `package.json`.
 
+QBS Core 1.1.1 or later is required: the `QBS.ServiceLocator` assembly references the `QBS.Core` assembly introduced in that version, and service discovery enumerates loaded assemblies through its `AssemblyCompat` wrapper. That wrapper is what keeps discovery compiling across the Unity 6000.5 assembly API change, where `AppDomain.CurrentDomain.GetAssemblies()` gave way to `UnityEngine.Assemblies.CurrentAssemblies`. Pin the dependency with `#v1.1.1` if you need a fixed core version.
+
 ---
 
 ## Core Concepts

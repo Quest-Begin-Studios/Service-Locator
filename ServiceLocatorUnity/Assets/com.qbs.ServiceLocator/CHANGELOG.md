@@ -4,6 +4,16 @@ All notable changes to this package are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.1] - 2026-09-10
+
+### Fixed
+
+- Service discovery called `UnityEngine.Assemblies.CurrentAssemblies`, which exists only in Unity 6000.5 and later, so the package failed to compile on 6000.0 through 6000.4. It now goes through `QBS.Core.AssemblyCompat`, which selects the API the running editor actually has.
+
+### Changed
+
+- `QBS.ServiceLocator` references the `QBS.Core` assembly, so `com.qbs.core` 1.1.1 or later is now required. Consumers pinning an older core revision in their `Packages/manifest.json` need to move to `v1.1.1` or a later commit.
+
 ## [2.0.0] - 2026-08-08
 
 Major version because the `Removed` section below deletes four public members. Every existing consumer breaks at compile time on upgrade; the migration table maps each one to its replacement.

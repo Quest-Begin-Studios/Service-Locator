@@ -16,6 +16,7 @@ A lightweight, reflection-driven Service Locator for Unity. Provides centralized
 ## Requirements
 
 - Unity 6000.0 or later
+- [QBS Core](https://github.com/QuestBeginStudios/QBS-Core) 1.1.1 or later — service discovery resolves loaded assemblies through its `AssemblyCompat`, which covers the Unity 6000.5 assembly API change
 
 ## Installation
 
@@ -29,7 +30,7 @@ A lightweight, reflection-driven Service Locator for Unity. Provides centralized
 https://github.com/Quest-Begin-Studios/Service-Locator.git?path=ServiceLocatorUnity/Assets/com.qbs.ServiceLocator
 ```
 
-To pin a specific release append `#v1.0.0` to the URL.
+To pin a specific release append `#v2.0.1` to the URL.
 
 ### Via `manifest.json`
 

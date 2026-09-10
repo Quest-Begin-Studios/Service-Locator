@@ -1,6 +1,7 @@
 {
 	"name": "QBS.ServiceLocator",
 	"references": [
-		"UniTask"
+		"UniTask",
+		"QBS.Core"
 	]
 }

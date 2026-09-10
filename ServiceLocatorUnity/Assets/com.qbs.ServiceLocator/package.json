@@ -1,6 +1,6 @@
 {
   "name": "com.qbs.service-locator",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "displayName": "QBS Service Locator",
   "description": "Lightweight, reflection-driven Service Locator for Unity. Provides automatic service discovery via attributes, four lifetime scopes (Global, ScopedContext, Scene, PersistentScene), parallel async initialization, and clean editor play-session resets.",
   "unity": "6000.0",

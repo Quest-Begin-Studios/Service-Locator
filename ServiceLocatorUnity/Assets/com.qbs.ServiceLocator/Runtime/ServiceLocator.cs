@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using QBS.Core;
 using UnityEngine;
-using UnityEngine.Assemblies;
 using UnityEngine.SceneManagement;
 
 namespace QBS.ServiceLocator
@@ -202,7 +201,7 @@ namespace QBS.ServiceLocator
 
             //Which concrete type already claimed each ServiceType, so a collision can name both sides
             var serviceTypeOwners = new Dictionary<Type, Type>();
-            var assemblies = CurrentAssemblies.GetLoadedAssemblies();
+            var assemblies = AssemblyCompat.GetLoadedAssemblies();
 
             foreach (var assembly in assemblies)
             {
