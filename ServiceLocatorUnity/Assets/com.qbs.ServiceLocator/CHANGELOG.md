@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
-- Service discovery called `UnityEngine.Assemblies.CurrentAssemblies`, which exists only in Unity 6000.5 and later, so the package failed to compile on 6000.0 through 6000.4. It now goes through `QBS.Core.AssemblyCompat`, which selects the API the running editor actually has.
+- Service discovery called `UnityEngine.Assemblies.CurrentAssemblies`, which exists only in Unity 6000.4 and later, so the package failed to compile on 6000.0 through 6000.3. It now goes through `QBS.Core.AssemblyCompat`, which selects the API the running editor actually has.
 
 ### Changed
 
