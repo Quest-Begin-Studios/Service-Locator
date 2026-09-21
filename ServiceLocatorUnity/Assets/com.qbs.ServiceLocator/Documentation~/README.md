@@ -10,6 +10,7 @@ A reflection-driven Service Locator for Unity with automatic service discovery, 
 - [Global Services](#global-services)
 - [ScopedContext Services](#scopedcontext-services)
 - [Scene Services](#scene-services)
+- [Constructor Injection](#constructor-injection)
 - [Async Initialization](#async-initialization)
 - [Container Events](#container-events)
 - [Safe Retrieval](#safe-retrieval)
@@ -306,9 +307,70 @@ ServiceLocator.SceneServiceRegistered += (scene, serviceType, service) => { /* i
 
 ---
 
+## Constructor Injection
+
+A service may take the services it needs as constructor parameters. The container resolves them, constructs in dependency order, and initializes in that same order, so a dependency is always initialized before the service that was handed it.
+
+```csharp
+[ServiceAttribute(Lifetime.Global, typeof(IInventoryService))]
+public class InventoryService : IInventoryService
+{
+    private readonly ISaveService _save;
+
+    public InventoryService(ISaveService save) => _save = save;
+
+    public bool IsAsyncInit => false;
+}
+```
+
+Injection is opt-in: a parameterless constructor keeps working exactly as before, `Fetch*` included.
+
+### What can be injected
+
+- The parameter must be an **interface that some service registers**. A concrete type or a plain value is not resolvable.
+- It must be **reachable from the container being built** — Global services from anywhere, a context's own services from that context.
+- A **sibling context** is not reachable. Neither are **Scene** and **PersistentScene** services, which register themselves from `Awake`; nothing discovered at startup can know when they will exist. Those stay on `Fetch*`.
+- With several public constructors, mark the one to use with `[ServiceConstructor]`.
+- A **synchronous service cannot depend on an asynchronous one** — waiting for it would mean blocking the main thread. Make the dependent async too.
+
+Each of these skips the service and says why, rather than leaving a null to surface somewhere else.
+
+### Not every dependency belongs in a constructor
+
+A constructor parameter says *I cannot be built without this*. That is why two services that need each other cannot both declare it — neither can be constructed first, so both are skipped and the cycle is named:
+
+```
+QuestService is in a dependency cycle (IQuestService -> IInventoryService -> IQuestService) and every
+service in it is skipped. A constructor parameter cannot express a mutual reference, because neither
+side can be built first. Drop the parameter on one side and fetch that service where it is used
+instead: registration happens before initialization, so the instance is already there.
+```
+
+This is not a scheduling problem and no ordering fixes it. A reference a service uses **after** boot rather than **during** construction is a different kind of dependency: leave it out of the constructor and fetch it at the point of use.
+
+```csharp
+[ServiceAttribute(Lifetime.Global, typeof(IQuestService))]
+public class QuestService : IQuestService
+{
+    // Not a constructor parameter: InventoryService fetches this one back, and a pair of
+    // parameters would be a cycle neither side could be built out of.
+    public void Grant(Reward reward) => ServiceLocator.FetchGlobalService<IInventoryService>().Add(reward);
+
+    public bool IsAsyncInit => false;
+}
+```
+
+**Rule of thumb:** take it as a parameter when you need the other service **initialized** before you are; fetch it at use time when you only need it to **exist**.
+
+### When a dependency fails
+
+A service whose dependency failed to initialize is not initialized either. It is marked `Failed` naming the dependency as the reason, rather than running against a half-built object.
+
+---
+
 ## Async Initialization
 
-Services can declare themselves async. The container initializes all sync services first, then fires all async initializations in parallel. The `ContainerServicesInitialized` event fires only after every async service has settled.
+Services can declare themselves async. The container initializes all sync services first, then runs the async ones in dependency levels: every async service with no async dependency of its own starts together, those depending on them start once that level has settled, and so on. Async services that depend on nothing therefore still run in parallel. The `ContainerServicesInitialized` event fires only after the last level has settled.
 
 ```csharp
 [ServiceAttribute(Lifetime.Global, typeof(IRemoteConfigService))]
@@ -497,7 +559,7 @@ void IService.DisposeService()
 - Implement `DisposeService()` (not `Dispose()`) when your service holds resources
 
 **Avoid:**
-- Creating circular dependencies between services in the same container; use `AwaitInitialization` if service A must wait for service B
+- Making two services in the same container constructor-dependent on each other — neither can be built first, so both are skipped; have one fetch the other at the point of use, and `AwaitInitialization` if it must be ready first
 - Storing references to Scene-lifetime services across scene loads
 - Reaching into another scene's services; coordinate through a `Global`/`ScopedContext` service or an orchestrator instead
 - Using the ServiceLocator in static constructors — `GameStart` may not have run yet
