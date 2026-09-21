@@ -318,14 +318,18 @@ namespace QBS.ServiceLocator
         /// <summary>
         ///     Resolves a Scene-lifetime service from <paramref name="scene"/>'s own container.
         ///     Strictly local: no other loaded scene's container is searched. Returns <c>null</c> when
-        ///     <paramref name="scene"/> has no container, or when its container holds no such service.
+        ///     <paramref name="scene"/> has no container.
         /// </summary>
+        /// <remarks>
+        ///     A scene that has a container but not this service throws <see cref="KeyNotFoundException"/>,
+        ///     deliberately. Asking for a service the scene never registered is a mistake about that scene's
+        ///     composition, and a null would surface it somewhere else entirely; the throw makes whoever
+        ///     wants the service read the registration once. Use <see cref="TryGetSceneService{TService}(Scene, out TService)"/>
+        ///     where absence is a legitimate answer.
+        /// </remarks>
         public static TService FetchSceneService<TService>(Scene scene) where TService : class, IService
         {
-            //TryGetService, not GetService: the container accessor throws on a miss by design, while this
-            //one answers null, which is what a registration the locator rejected has to look like.
-            var sceneContainer = GetSceneContainer(scene);
-            return sceneContainer != null && sceneContainer.TryGetService<TService>(out var service) ? service : null;
+            return GetSceneContainer(scene)?.GetService<TService>();
         }
 
         /// <summary>
