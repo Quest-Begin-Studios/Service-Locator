@@ -326,7 +326,7 @@ namespace QBS.ServiceLocator
 				}
 
 				var cycle = FindCycle(plan, planByServiceType, constructed);
-				Log.Error($"{plan.ConcreteType.FullName} is in a dependency cycle ({cycle}) and every service in it is skipped. Break the cycle, or have one side fetch the other after initialization.");
+				Log.Error($"{plan.ConcreteType.FullName} is in a dependency cycle ({cycle}) and every service in it is skipped. A constructor parameter cannot express a mutual reference, because neither side can be built first. Drop the parameter on one side and fetch that service where it is used instead: registration happens before initialization, so the instance is already there.");
 			}
 		}
 

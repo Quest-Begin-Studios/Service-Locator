@@ -108,6 +108,32 @@ The rules, each of which is an error that skips the service rather than a surpri
 - A synchronous service cannot depend on an asynchronous one; make it async. Waiting for it would mean
   blocking the main thread.
 
+### Not every dependency belongs in a constructor
+
+A constructor parameter says *I cannot be built without this*. That is why two services that need each
+other cannot both declare it: neither can be constructed first, so the cycle rule above skips both, and
+no amount of ordering can fix it.
+
+A reference a service uses *after* boot rather than *during* construction is not that kind of
+dependency. Leave it out of the constructor and fetch it at the point of use. Registration happens
+before initialization, so the instance is there by the time any of your code runs, and two services can
+hold each other perfectly well that way.
+
+```csharp
+[Service(Lifetime.Global, typeof(IQuestService))]
+public class QuestService : IQuestService
+{
+    //Not a constructor parameter: IInventoryService fetches this one back, and a pair of parameters
+    //would be a cycle neither side could be built out of.
+    public void Grant(Reward reward) => ServiceLocator.FetchGlobalService<IInventoryService>().Add(reward);
+
+    public bool IsAsyncInit => false;
+}
+```
+
+The rule of thumb: take it as a parameter when you need it to be *initialized* before you are, and fetch
+it at use time when you only need it to *exist*.
+
 A parameterless constructor keeps working exactly as before, `Fetch*` included.
 
 ## Quick Start
