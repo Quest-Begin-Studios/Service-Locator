@@ -27,6 +27,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Changed
 
+- `ServiceAttribute` derives from `UnityEngine.Scripting.PreserveAttribute`, so managed stripping keeps every type marked `[Service]` and the constructor discovery calls on it. A service is found by reflection and referenced statically by nothing, which is precisely what the linker deletes; measured on 6000.5.1f1 at stripping High, a plain `[Service]` type is gone from the player assembly and one whose attribute derives from `PreserveAttribute` survives with its members. Nothing in consuming code changes, and no `link.xml` is needed. `AttributeUsage` is now declared explicitly on `ServiceAttribute` so it does not adopt `PreserveAttribute`'s `Inherited = false`, which would have quietly changed how discovery reads the attribute.
 - `FetchGlobalService`, `TryGetGlobalService` and `IsGlobalContainerInitialized` throw `InvalidOperationException` naming `GameStart()` when the Global container does not exist yet, instead of dereferencing null. Calling before `SubsystemRegistration`, or from an EditMode test that never started the locator, now reports the reason rather than a `NullReferenceException` from inside the package.
 - `SceneServiceContainer.RegisterService<T>` names the already-registered concrete type and the priority its attribute won at, so a scene override that did not take effect is visible in the error.
 

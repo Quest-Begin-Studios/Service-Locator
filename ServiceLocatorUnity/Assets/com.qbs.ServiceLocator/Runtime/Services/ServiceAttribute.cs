@@ -30,8 +30,22 @@ namespace QBS.ServiceLocator
 	///     When two concrete types claim one <see cref="ServiceType"/>, the higher <see cref="Priority"/>
 	///     wins: a game's <see cref="ServicePriority.Override"/> beats a package's
 	///     <see cref="ServicePriority.Default"/> whichever order discovery met them in.
+	///
+	///     The base class is load-bearing, not decoration. A service is reached by reflection and referenced
+	///     statically by nothing, so managed stripping deletes it from a player; Unity's linker matches
+	///     PreserveAttribute by inheritance, so deriving from it keeps every type marked with this attribute,
+	///     along with the constructor discovery needs. Measured on 6000.5.1f1, Mono2x, stripping High: a
+	///     service marked with an attribute deriving from Attribute is absent from the player assembly, and
+	///     one marked with an attribute deriving from PreserveAttribute survives with its members. Changing
+	///     the base class back breaks players only, with every behavioural test still green, so
+	///     ServiceAttribute_DerivesFromPreserve_SoStrippedPlayersKeepServices asserts the base class itself.
+	///
+	///     AttributeUsage is spelled out because PreserveAttribute declares Inherited = false, which this
+	///     attribute would otherwise adopt: discovery reads it with Attribute.GetCustomAttribute, which
+	///     honours inheritance, and that should not change as a side effect of the base class.
 	/// </remarks>
-	public class ServiceAttribute : Attribute
+	[AttributeUsage(AttributeTargets.All, Inherited = true)]
+	public class ServiceAttribute : UnityEngine.Scripting.PreserveAttribute
 	{
 		public Lifetime Lifetime { get; }
 		public Type ServiceType { get; }
