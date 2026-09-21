@@ -4,6 +4,21 @@ All notable changes to this package are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-09-21
+
+### Added
+
+- **Constructor injection.** A discovered service may declare its dependencies as constructor parameters instead of calling `Fetch*` inside `InitializeService`. The container resolves them, so the dependencies are visible in the signature, and the class can be built in a test by handing it fakes, with no static locator involved. A parameterless constructor still goes through `Activator.CreateInstance` and is untouched by any of this.
+- `ServiceConstructorAttribute`, naming which constructor to call on a service that has more than one public constructor. A single public constructor needs no attribute; several with no attribute is an error and the service is skipped, because guessing is how a service ends up half-built.
+- **Dependency-ordered initialization.** Services are constructed in topological order and initialized in that same order, so nothing is initialized before what it was handed. An async service's initialization is preceded by an await on each of its dependencies' initialization tasks, and the composite task is stored against the service before the next one starts, so a diamond awaits one run rather than starting two.
+- **Failure propagation.** When a dependency's initialization fails, its dependents are marked `Failed` without being initialized, and the log names the dependency rather than the symptom. Previously a dependent ran against a half-initialized dependency.
+
+### Changed
+
+- A constructor parameter must be an interface some service registers, and must be reachable from the service's own container: Global for anything, or the service's own context for a `ScopedContext` service. Anything else — a concrete type, a `string`, a sibling context, a Scene or PersistentScene service — is an error at discovery and the service is skipped. Scene and PersistentScene services register themselves from `Awake` and are never injected, because no discovered service can know when they exist.
+- A dependency cycle is reported with the loop spelled out (`IA -> IB -> IA`) and every service in it is skipped; the rest of the container is unaffected.
+- A synchronous service that depends on an asynchronous one in the same container is marked `Failed` rather than initialized early, and the error says to make it async. This is the one ordering the runtime cannot honour: waiting would block the main thread. It is detected at initialization rather than at discovery, because `IsAsyncInit` is an instance member and cannot be read until the service exists.
+
 ## [2.1.0] - 2026-09-21
 
 ### Added

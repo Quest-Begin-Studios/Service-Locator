@@ -40,4 +40,15 @@ namespace QBS.ServiceLocator
 			Priority = priority;
 		}
 	}
+
+	/// <summary>
+	///     Marks which constructor the locator calls on a service that has more than one public
+	///     constructor. A service with a single public constructor needs no attribute; one with several
+	///     and no attribute is skipped, because guessing which to call is how a service ends up
+	///     half-built.
+	/// </summary>
+	[AttributeUsage(AttributeTargets.Constructor)]
+	public class ServiceConstructorAttribute : Attribute
+	{
+	}
 }

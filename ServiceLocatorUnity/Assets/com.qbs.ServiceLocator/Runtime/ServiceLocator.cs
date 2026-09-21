@@ -436,6 +436,17 @@ namespace QBS.ServiceLocator
         }
 
         /// <summary>
+        ///     Resolves a Global service for a container injecting it into one of its own. Global is the
+        ///     only lifetime a container can reach outside itself, and it is built before any other, so a
+        ///     miss here means the dependency was skipped at discovery rather than not built yet.
+        /// </summary>
+        internal static bool TryGetGlobalServiceForInjection(Type serviceType, out IService service)
+        {
+            service = null;
+            return _globalServiceContainer != null && _globalServiceContainer.TryGetService(serviceType, out service);
+        }
+
+        /// <summary>
         ///     Throws when the Global container does not exist yet. <see cref="GameStart"/> builds it on
         ///     SubsystemRegistration in a player, but an EditMode test has to call it itself, and without
         ///     this the miss surfaces as a NullReferenceException from inside the locator.

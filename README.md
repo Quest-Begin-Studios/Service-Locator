@@ -79,6 +79,37 @@ Clone or download the repository, then reference it by local path:
 }
 ```
 
+## Declaring dependencies
+
+A service may take the services it needs as constructor parameters. The container resolves them, builds
+in dependency order, and initializes in that same order, so a dependency is always initialized before the
+service that was handed it.
+
+```csharp
+[Service(Lifetime.Global, typeof(IInventoryService))]
+public class InventoryService : IInventoryService
+{
+    private readonly ISaveService _save;
+
+    public InventoryService(ISaveService save) => _save = save;
+
+    public bool IsAsyncInit => false;
+}
+```
+
+The rules, each of which is an error that skips the service rather than a surprise at runtime:
+
+- A parameter must be an interface that some service registers.
+- It must be reachable: Global from anywhere, a context's own services from that context. A sibling
+  context is not reachable, and neither are Scene or PersistentScene services, which register themselves
+  from `Awake` — nothing discovered can know when they exist. Those stay on `Fetch*`.
+- Several public constructors need `[ServiceConstructor]` on the one to use.
+- A cycle is reported with the loop named, and every service in it is skipped.
+- A synchronous service cannot depend on an asynchronous one; make it async. Waiting for it would mean
+  blocking the main thread.
+
+A parameterless constructor keeps working exactly as before, `Fetch*` included.
+
 ## Quick Start
 
 ```csharp
