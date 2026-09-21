@@ -43,9 +43,10 @@ namespace QBS.ServiceLocator
 		public void RegisterService<T>(IService service) where T : class, IService
 		{
 			var serviceType = typeof(T);
-			if (ContainedServices.ContainsKey(serviceType))
+			if (ContainedServices.TryGetValue(serviceType, out var registeredService))
 			{
-				Log.Error($"Service {serviceType.FullName} already registered for this scene context");
+				var priority = _serviceAttributeMap.TryGetValue(serviceType, out var winningAttribute) ? winningAttribute.Priority : 0;
+				Log.Error($"Service {serviceType.FullName} is already registered for this scene by {registeredService.GetType().FullName} at priority {priority}; {service.GetType().FullName} is not replacing it.");
 				return;
 			}
 

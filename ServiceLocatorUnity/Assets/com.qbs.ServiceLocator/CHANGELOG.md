@@ -4,6 +4,21 @@ All notable changes to this package are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-09-21
+
+### Added
+
+- `ServiceAttribute.Priority`, an optional third argument on both constructors, defaulting to `0`. When two concrete types claim the same `ServiceType`, the higher priority wins and assembly enumeration order no longer decides which one: the lower-priority type is skipped silently, and a higher-priority type evicts an owner the scan happened to meet first. Equal priorities remain an error that keeps the first type met, so two packages cannot silently fight over one interface. The studio convention is `0` for a package default, `100` for a game's override and `1000` for a test fake.
+
+### Changed
+
+- `FetchGlobalService`, `TryGetGlobalService` and `IsGlobalContainerInitialized` throw `InvalidOperationException` naming `GameStart()` when the Global container does not exist yet, instead of dereferencing null. Calling before `SubsystemRegistration`, or from an EditMode test that never started the locator, now reports the reason rather than a `NullReferenceException` from inside the package.
+- `SceneServiceContainer.RegisterService<T>` names the already-registered concrete type and the priority its attribute won at, so a scene override that did not take effect is visible in the error.
+
+### Fixed
+
+- `ImplementsDisposeCorrectly` no longer skips every service in a player built at a high IL2CPP stripping level. `Type.GetInterfaceMap` is unavailable there and the throw propagated out of discovery; it is now wrapped, logs a warning naming the type, and assumes the implementation is correct.
+
 ## [2.0.1] - 2026-09-10
 
 ### Fixed

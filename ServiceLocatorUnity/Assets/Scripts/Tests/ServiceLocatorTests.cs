@@ -86,6 +86,70 @@ namespace QBS.ServiceLocator.Tests
         public bool IsAsyncInit => false;
     }
 
+    public interface IPriorityTestService : IService
+    {
+        string Owner { get; }
+    }
+
+    // A game's override has to beat a package default whichever order the scan meets the two in. Both
+    // pairs stay registered for that reason: this one declares the default first, the reversed pair below
+    // declares the override first, so between them the evict-the-owner and skip-the-newcomer branches are
+    // both covered without depending on what order Type[] comes back in.
+    [Service(Lifetime.Global, typeof(IPriorityTestService))]
+    public class PriorityDefaultTestService : IPriorityTestService
+    {
+        public bool IsAsyncInit => false;
+        public string Owner => "default";
+    }
+
+    [Service(Lifetime.Global, typeof(IPriorityTestService), 100)]
+    public class PriorityOverrideTestService : IPriorityTestService
+    {
+        public bool IsAsyncInit => false;
+        public string Owner => "override";
+    }
+
+    public interface IReversedPriorityTestService : IService
+    {
+        string Owner { get; }
+    }
+
+    [Service(Lifetime.Global, typeof(IReversedPriorityTestService), 100)]
+    public class ReversedPriorityOverrideTestService : IReversedPriorityTestService
+    {
+        public bool IsAsyncInit => false;
+        public string Owner => "override";
+    }
+
+    [Service(Lifetime.Global, typeof(IReversedPriorityTestService))]
+    public class ReversedPriorityDefaultTestService : IReversedPriorityTestService
+    {
+        public bool IsAsyncInit => false;
+        public string Owner => "default";
+    }
+
+    public interface IScopedPriorityTestService : IService
+    {
+        string Owner { get; }
+    }
+
+    // The two contexts differ on purpose: the context map is keyed by ServiceType, so an override that
+    // also moves the service to another context has to evict the loser's entry or discovery throws on
+    // the duplicate key and abandons the rest of the scan.
+    [Service(42004, typeof(IScopedPriorityTestService))]
+    public class ScopedPriorityDefaultTestService : IScopedPriorityTestService
+    {
+        public bool IsAsyncInit => false;
+        public string Owner => "default";
+    }
+
+    [Service(42005, typeof(IScopedPriorityTestService), 100)]
+    public class ScopedPriorityOverrideTestService : IScopedPriorityTestService
+    {
+        public bool IsAsyncInit => false;
+        public string Owner => "override";
+    }
+
     public interface IScopedSyncTestService : IService
     {
     }
@@ -264,16 +328,35 @@ namespace QBS.ServiceLocator.Tests
         }
 
         [Test]
-        public void FetchGlobalService_AfterPurgeWithoutRediscovery_ThrowsNullReferenceException()
+        public void GlobalAccessors_AfterPurgeWithoutRediscovery_ThrowNamingGameStart()
         {
-            // KNOWN GAP: PurgeContainer(Global) nulls out the global container, but
-            // FetchGlobalService/TryGetGlobalService/IsGlobalContainerInitialized have no null
-            // guard, unlike their Scene-lifetime counterparts (which use `?.` throughout). This
-            // documents current behavior, not desired behavior — if this stops throwing, a null
-            // guard was added and this test should be replaced with a positive assertion.
+            // PurgeContainer(Global) nulls out the global container. Every accessor that reaches into it
+            // has to say so rather than surface a NullReferenceException from inside the locator, which is
+            // the same message an EditMode test gets for never having called GameStart at all.
             ServiceLocator.PurgeContainer(Lifetime.Global);
 
-            Assert.Throws<NullReferenceException>(() => ServiceLocator.FetchGlobalService<IGreeterTestService>());
+            Assert.Throws<InvalidOperationException>(() => ServiceLocator.FetchGlobalService<IGreeterTestService>());
+            Assert.Throws<InvalidOperationException>(() => ServiceLocator.TryGetGlobalService<IGreeterTestService>(out _));
+            Assert.Throws<InvalidOperationException>(() => _ = ServiceLocator.IsGlobalContainerInitialized);
+        }
+
+        [Test]
+        public void GameStart_HigherPriorityService_WinsWhicheverOrderDiscoveryMetThemIn()
+        {
+            Assert.IsTrue(ServiceLocator.TryGetGlobalService<IPriorityTestService>(out var defaultDeclaredFirst));
+            Assert.AreEqual("override", defaultDeclaredFirst.Owner);
+
+            Assert.IsTrue(ServiceLocator.TryGetGlobalService<IReversedPriorityTestService>(out var overrideDeclaredFirst));
+            Assert.AreEqual("override", overrideDeclaredFirst.Owner);
+        }
+
+        [Test]
+        public void GameStart_HigherPriorityScopedService_TakesOverTheContextMapEntry()
+        {
+            ServiceLocator.DiscoverServicesOfLifetime(Lifetime.ScopedContext, 42005);
+
+            Assert.IsTrue(ServiceLocator.TryGetContextService<IScopedPriorityTestService>(out var service));
+            Assert.AreEqual("override", service.Owner);
         }
 
         [Test]
