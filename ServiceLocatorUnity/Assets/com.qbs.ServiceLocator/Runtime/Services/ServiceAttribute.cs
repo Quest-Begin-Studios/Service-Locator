@@ -3,12 +3,6 @@ using System;
 namespace QBS.ServiceLocator
 {
 	/// <summary>
-	///     Attribute used to mark service implementations for automatic discovery and registration.
-	///     Specifies the service's lifetime scope (Global, Scene, PersistentScene, or ScopedContext), the interface
-	///     type it implements, and optionally the context for scoped services. Used by the ServiceLocator for
-	///     reflection-based service discovery.
-	/// </summary>
-	/// <summary>
 	///     Who a service implementation belongs to, and so which one wins when two claim the same interface.
 	///     Ordered by declaration: a later member outranks an earlier one, and assembly load order decides
 	///     nothing. Two implementations at the same priority stay an error, so neither a pair of packages
@@ -26,6 +20,12 @@ namespace QBS.ServiceLocator
 		Tests,
 	}
 
+	/// <summary>
+	///     Attribute used to mark service implementations for automatic discovery and registration.
+	///     Specifies the service's lifetime scope (Global, Scene, PersistentScene, or ScopedContext), the interface
+	///     type it implements, and optionally the context for scoped services. Used by the ServiceLocator for
+	///     reflection-based service discovery.
+	/// </summary>
 	/// <remarks>
 	///     When two concrete types claim one <see cref="ServiceType"/>, the higher <see cref="Priority"/>
 	///     wins: a game's <see cref="ServicePriority.Override"/> beats a package's
