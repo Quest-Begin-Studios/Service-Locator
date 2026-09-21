@@ -23,7 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
-- `ServiceAttribute.Priority`, an optional third argument on both constructors, defaulting to `0`. When two concrete types claim the same `ServiceType`, the higher priority wins and assembly enumeration order no longer decides which one: the lower-priority type is skipped silently, and a higher-priority type evicts an owner the scan happened to meet first. Equal priorities remain an error that keeps the first type met, so two packages cannot silently fight over one interface. The studio convention is `0` for a package default, `100` for a game's override and `1000` for a test fake.
+- `ServicePriority` (`Default`, `Override`, `Tests`) and `ServiceAttribute.Priority`, an optional third argument on both constructors defaulting to `ServicePriority.Default`. When two concrete types claim the same `ServiceType`, the higher priority wins and assembly enumeration order no longer decides which one: the lower-priority type is skipped silently, and a higher-priority type evicts an owner the scan happened to meet first. Equal priorities remain an error that keeps the first type met, so neither two packages nor two game services can silently fight over one interface. Precedence is the declaration order of the enum, so a tier can be added later without renumbering anything: a package ships `Default`, a game replaces it with `Override`, a test fake takes `Tests`.
 
 ### Changed
 

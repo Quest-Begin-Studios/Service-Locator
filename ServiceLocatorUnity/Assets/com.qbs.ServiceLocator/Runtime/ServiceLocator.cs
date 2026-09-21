@@ -237,7 +237,7 @@ namespace QBS.ServiceLocator
                         var ownerAttribute = _allServicesConcreteMap[owner];
                         if (attribute.Priority == ownerAttribute.Priority)
                         {
-                            Log.Error($"{type.FullName} and {owner.FullName} both register {attribute.ServiceType.FullName} at priority {attribute.Priority}. Keeping {owner.FullName}. Give one of them a higher Priority.");
+                            Log.Error($"{type.FullName} and {owner.FullName} both register {attribute.ServiceType.FullName} at {nameof(ServicePriority)}.{attribute.Priority}. Keeping {owner.FullName}. One of them needs a higher priority.");
                             continue;
                         }
 
