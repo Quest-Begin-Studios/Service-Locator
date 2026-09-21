@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
+- `FetchSceneService` (and `FetchPersistentSceneService`, which delegates to it) answered a `KeyNotFoundException` from inside the container when a scene had a container but not the service asked for — including right after the locator rejected a registration, which is exactly when a caller checks. It returns `null`, as its summary always said. The container's own `GetService` still throws on a miss; that contract is deliberate and tested.
 - The unresolvable `com.qbs.core` git URL is gone from `dependencies`. UPM only resolves a `dependencies` entry against a registry or against a package the project manifest already names, and a git URL is neither. The entry is dropped rather than replaced with a version range: the locator is meant to track Core's latest revision, and a floor in the metadata is one more number to remember to bump. Consuming projects list `com.qbs.core` in their own `Packages/manifest.json` — untagged, to stay current — as the README now shows.
 - `ImplementsDisposeCorrectly` no longer skips every service in a player built at a high IL2CPP stripping level. `Type.GetInterfaceMap` is unavailable there and the throw propagated out of discovery; it is now wrapped, logs a warning naming the type, and assumes the implementation is correct.
 
