@@ -17,7 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
-- The `com.qbs.core` dependency is declared as the version range `1.1.1` instead of a git URL. UPM only resolves a `dependencies` entry against a registry or against a package the project manifest already names, so the git URL could never resolve and the requirement was invisible to version checking. Consuming projects must list `com.qbs.core` in their own `Packages/manifest.json`, as the README now shows.
+- The unresolvable `com.qbs.core` git URL is gone from `dependencies`. UPM only resolves a `dependencies` entry against a registry or against a package the project manifest already names, and a git URL is neither. The entry is dropped rather than replaced with a version range: the locator is meant to track Core's latest revision, and a floor in the metadata is one more number to remember to bump. Consuming projects list `com.qbs.core` in their own `Packages/manifest.json` — untagged, to stay current — as the README now shows.
 - `ImplementsDisposeCorrectly` no longer skips every service in a player built at a high IL2CPP stripping level. `Type.GetInterfaceMap` is unavailable there and the throw propagated out of discovery; it is now wrapped, logs a warning naming the type, and assumes the implementation is correct.
 
 ## [2.0.1] - 2026-09-10

@@ -5,8 +5,7 @@
   "description": "Lightweight, reflection-driven Service Locator for Unity. Provides automatic service discovery via attributes, four lifetime scopes (Global, ScopedContext, Scene, PersistentScene), parallel async initialization, and clean editor play-session resets.",
   "unity": "6000.0",
   "dependencies": {
-    "com.cysharp.unitask": "2.5.11",
-    "com.qbs.core": "1.1.1"
+    "com.cysharp.unitask": "2.5.11"
   },
   "keywords": [
     "service-locator",

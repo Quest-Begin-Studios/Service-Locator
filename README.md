@@ -21,9 +21,10 @@ A lightweight, reflection-driven Service Locator for Unity. Provides centralized
 ## Installation
 
 **A project names every dependency itself.** UPM does not resolve a git package's own dependencies
-transitively, and a `dependencies` entry in `package.json` cannot be a git URL, so this package declares
-QBS Core and UniTask as version ranges and leaves it to the project manifest to supply them. Adding only
-the locator fails with `Package [com.qbs.core@1.1.1] cannot be found`.
+transitively, and a `dependencies` entry in `package.json` cannot be a git URL. QBS Core is therefore not
+declared there at all: it is deliberately unpinned, so the locator takes whichever revision the project
+supplies and stays current with Core by default. A project that adds only the locator fails to compile on
+the missing `QBS.Core` assembly rather than reporting a missing package, so add both.
 
 ### Via `manifest.json`
 
@@ -49,8 +50,10 @@ uses: UniTask through the OpenUPM scoped registry, QBS Core and the locator by g
 }
 ```
 
-Append a tag to either git URL to pin a release: `#v2.1.0` for the locator, `#v1.1.1` or later for QBS
-Core — an earlier core revision has no `AssemblyCompat`, and the locator will not compile against it.
+Leave the QBS Core URL untagged, as above, to track its latest revision — that is the intended setup, and
+the locator is kept working against Core's default branch. Pin it with `#v1.1.1` or later only when you
+need a fixed revision; anything earlier has no `AssemblyCompat`, which service discovery needs. Append
+`#v2.1.0` to the locator's own URL to pin it to a release.
 
 ### Via Unity Package Manager (Git URL)
 
