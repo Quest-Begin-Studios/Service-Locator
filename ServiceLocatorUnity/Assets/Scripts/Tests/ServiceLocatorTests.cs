@@ -394,6 +394,23 @@ namespace QBS.ServiceLocator.Tests
             Assert.AreEqual("override", service.Owner);
         }
 
+        //Nothing an edit-mode test runs can be stripped, so what is asserted here is the one property a
+        //stripped player depends on: that the attribute still derives from PreserveAttribute.
+        [Test]
+        public void ServiceAttribute_DerivesFromPreserve_SoStrippedPlayersKeepServices()
+        {
+            Assert.IsTrue(typeof(ServiceAttribute).IsSubclassOf(typeof(UnityEngine.Scripting.PreserveAttribute)));
+        }
+
+        [Test]
+        public void ServiceAttribute_IsInherited_SoPreserveAttributeUsageIsNotAdopted()
+        {
+            var usage = (AttributeUsageAttribute) Attribute.GetCustomAttribute(typeof(ServiceAttribute), typeof(AttributeUsageAttribute));
+
+            Assert.IsNotNull(usage);
+            Assert.IsTrue(usage.Inherited);
+        }
+
         [Test]
         public void DiscoverServicesOfLifetime_ScopedContext_DiscoversAndInitializesService()
         {
