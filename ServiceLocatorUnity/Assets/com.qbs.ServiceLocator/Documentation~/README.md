@@ -10,7 +10,7 @@ A reflection-driven Service Locator for Unity with automatic service discovery, 
 - [Global Services](#global-services)
 - [ScopedContext Services](#scopedcontext-services)
 - [Scene Services](#scene-services)
-- [Constructor Injection](#constructor-injection)
+- [Declaring Dependencies](#declaring-dependencies)
 - [Async Initialization](#async-initialization)
 - [Container Events](#container-events)
 - [Safe Retrieval](#safe-retrieval)
@@ -307,60 +307,65 @@ ServiceLocator.SceneServiceRegistered += (scene, serviceType, service) => { /* i
 
 ---
 
-## Constructor Injection
+## Declaring Dependencies
 
-A service may take the services it needs as constructor parameters. The container resolves them, constructs in dependency order, and initializes in that same order, so a dependency is always initialized before the service that was handed it.
+A service declares what it needs with `[Inject]` on a field. The container constructs every service of the lifetime first, fills the injected fields, and then initializes each service as soon as everything it injected has finished initializing.
 
 ```csharp
 [ServiceAttribute(Lifetime.Global, typeof(IInventoryService))]
 public class InventoryService : IInventoryService
 {
-    private readonly ISaveService _save;
-
-    public InventoryService(ISaveService save) => _save = save;
+    [Inject] private ISaveService _save = default;
 
     public bool IsAsyncInit => false;
+
+    bool IService.InitializeService()
+    {
+        // _save is filled, and already initialized, by the time this runs.
+        return _save.Load("inventory");
+    }
 }
 ```
 
-Injection is opt-in: a parameterless constructor keeps working exactly as before, `Fetch*` included.
+The `= default` only silences CS0649 — nothing in your own code assigns the field, so the compiler warns it will always be null. A `csc.rsp` with `-nowarn:0649` removes the need for it project-wide.
+
+Injection is opt-in: a service with no injected field waits for nothing and keeps using `Fetch*` exactly as before.
 
 ### What can be injected
 
-- The parameter must be an **interface that some service registers**. A concrete type or a plain value is not resolvable.
+- The field's type must be an **interface that some service registers**. A concrete type or a plain value is not resolvable.
 - It must be **reachable from the container being built** — Global services from anywhere, a context's own services from that context.
 - A **sibling context** is not reachable. Neither are **Scene** and **PersistentScene** services, which register themselves from `Awake`; nothing discovered at startup can know when they will exist. Those stay on `Fetch*`.
-- With several public constructors, mark the one to use with `[ServiceConstructor]`.
-- A **synchronous service cannot depend on an asynchronous one** — waiting for it would mean blocking the main thread. Make the dependent async too.
+- The field cannot be **`readonly`**, because the container writes it after the constructor has run.
 
 Each of these skips the service and says why, rather than leaving a null to surface somewhere else.
 
-### Not every dependency belongs in a constructor
+### Injecting is not the only way to reach a service
 
-A constructor parameter says *I cannot be built without this*. That is why two services that need each other cannot both declare it — neither can be constructed first, so both are skipped and the cycle is named:
+`[Inject]` says *do not initialize me until this one is ready*. That is the stronger of the two claims, and it is why two services cannot inject each other — each would wait for the other forever, so both are skipped and the cycle is named:
 
 ```
-QuestService is in a dependency cycle (IQuestService -> IInventoryService -> IQuestService) and every
-service in it is skipped. A constructor parameter cannot express a mutual reference, because neither
-side can be built first. Drop the parameter on one side and fetch that service where it is used
-instead: registration happens before initialization, so the instance is already there.
+QuestService is in an [Inject] cycle (IQuestService -> IInventoryService -> IQuestService) and every
+service in it is skipped. An injected field decides initialization order, so a mutual pair would each
+wait for the other forever. Drop [Inject] on one side and fetch that service where it is used instead:
+every service is constructed and registered before any is initialized, so the instance is already there.
 ```
 
-This is not a scheduling problem and no ordering fixes it. A reference a service uses **after** boot rather than **during** construction is a different kind of dependency: leave it out of the constructor and fetch it at the point of use.
+When a service only needs the **reference**, to use at some point after boot, fetch it where it is used. Every service is constructed and registered before any of them is initialized, so the instance is always there.
 
 ```csharp
 [ServiceAttribute(Lifetime.Global, typeof(IQuestService))]
 public class QuestService : IQuestService
 {
-    // Not a constructor parameter: InventoryService fetches this one back, and a pair of
-    // parameters would be a cycle neither side could be built out of.
+    // Not injected: InventoryService reaches back for this one, and a mutual [Inject] pair would
+    // be a cycle that skips them both.
     public void Grant(Reward reward) => ServiceLocator.FetchGlobalService<IInventoryService>().Add(reward);
 
     public bool IsAsyncInit => false;
 }
 ```
 
-**Rule of thumb:** take it as a parameter when you need the other service **initialized** before you are; fetch it at use time when you only need it to **exist**.
+**Rule of thumb:** inject it when you need the other service **initialized** before you are; fetch it at use time when you only need it to **exist**.
 
 ### When a dependency fails
 
@@ -370,7 +375,7 @@ A service whose dependency failed to initialize is not initialized either. It is
 
 ## Async Initialization
 
-Services can declare themselves async. The container initializes all sync services first, then runs the async ones in dependency levels: every async service with no async dependency of its own starts together, those depending on them start once that level has settled, and so on. Async services that depend on nothing therefore still run in parallel. The `ContainerServicesInitialized` event fires only after the last level has settled.
+Services can declare themselves async. The container starts every service that injected nothing at once, and releases each remaining service the moment the services it injected have settled — so independent work runs in parallel and a slow service only delays what actually depends on it. A synchronous service is simply one whose work finishes immediately when its turn comes, which is why it may inject an async one. The `ContainerServicesInitialized` event fires once every service has settled.
 
 ```csharp
 [ServiceAttribute(Lifetime.Global, typeof(IRemoteConfigService))]
@@ -559,7 +564,7 @@ void IService.DisposeService()
 - Implement `DisposeService()` (not `Dispose()`) when your service holds resources
 
 **Avoid:**
-- Making two services in the same container constructor-dependent on each other — neither can be built first, so both are skipped; have one fetch the other at the point of use, and `AwaitInitialization` if it must be ready first
+- Making two services in the same container `[Inject]` each other — each would wait for the other forever, so both are skipped; have one fetch the other at the point of use, and `AwaitInitialization` if it must be ready first
 - Storing references to Scene-lifetime services across scene loads
 - Reaching into another scene's services; coordinate through a `Global`/`ScopedContext` service or an orchestrator instead
 - Using the ServiceLocator in static constructors — `GameStart` may not have run yet

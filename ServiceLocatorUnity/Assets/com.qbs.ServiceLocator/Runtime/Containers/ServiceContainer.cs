@@ -8,21 +8,29 @@ namespace QBS.ServiceLocator
 {
 	/// <summary>
 	///     Standard implementation of IServiceContainer for managing Global and ScopedContext services.
-	///     Discovers the services of its own lifetime, constructs each one by passing the services its
-	///     constructor asks for, and initializes them in that same dependency order. A service with a
-	///     parameterless constructor is untouched by any of it and may keep fetching what it needs.
+	///     Discovers the services of its own lifetime, constructs each one, writes the services its
+	///     <see cref="InjectAttribute" /> fields ask for, and then initializes each one as soon as
+	///     everything it injected has finished. A service with no injected field waits for nothing and may
+	///     keep fetching what it needs.
 	/// </summary>
 	public class ServiceContainer : BaseServiceContainer
 	{
 		public event Action ContainerServicesInitialized;
 
-		//Construction order, which initialisation then follows, so nothing is initialised before what it
-		//was handed. Only dependencies inside this container are ordered: an outer Global service was
-		//constructed before this container existed.
-		private readonly List<IService> _initializationOrder = new();
+		private const BindingFlags InjectableFields = BindingFlags.Instance | BindingFlags.Public
+			| BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
+
+		//Only dependencies inside this container gate anything: an outer Global service finished
+		//initializing before this container existed.
 		private readonly Dictionary<IService, List<IService>> _inContainerDependencies = new();
+		private readonly Dictionary<IService, List<IService>> _dependents = new();
+		private readonly Dictionary<IService, int> _pendingDependencies = new();
+		private readonly List<IService> _initializationCandidates = new();
+		private readonly Queue<IService> _readyToInitialize = new();
 
 		private Dictionary<Type, ServiceAttribute> _attributeByServiceType;
+		private int _settledCount;
+		private bool _disposed;
 
 		public ServiceContainer(Lifetime containerLifetime,
 			Dictionary<Type, ServiceAttribute> allServices,
@@ -51,9 +59,9 @@ namespace QBS.ServiceLocator
 		}
 
 		/// <summary>
-		///     AllServicesMap is keyed by concrete type; constructor parameters name interfaces. This is the
-		///     other direction, over services of every lifetime, so a parameter can be validated against what
-		///     the whole application registers rather than only what this container holds.
+		///     AllServicesMap is keyed by concrete type; injected fields name interfaces. This is the other
+		///     direction, over services of every lifetime, so a field can be validated against what the
+		///     whole application registers rather than only what this container holds.
 		/// </summary>
 		private void IndexServicesByServiceType()
 		{
@@ -65,21 +73,33 @@ namespace QBS.ServiceLocator
 		}
 
 		/// <summary>
-		///     Populates the ServicesMap with service instances that match this container's context,
-		///     in an order where every constructor argument already exists.
+		///     Constructs every service of this lifetime and fills its injected fields.
 		/// </summary>
+		/// <remarks>
+		///     Injection happens as each service is built rather than in a pass of its own, which lets it
+		///     run in dependency order and makes a dependency that was skipped skip its dependents too. An
+		///     order always exists because a cycle among injected fields is refused before this runs.
+		/// </remarks>
 		private void PopulateMapWithServicesOfLifetime()
 		{
-			var plans = CollectConstructionPlans();
+			var plans = CollectServicePlans();
+			var built = new List<BuiltService>(plans.Count);
+			var skipped = new HashSet<Type>();
+
 			foreach (var plan in SortByDependencyOrder(plans))
 			{
-				Construct(plan);
+				if (TryBuild(plan, skipped, out var builtService))
+				{
+					built.Add(builtService);
+				}
 			}
+
+			RecordDependencyGraph(built);
 		}
 
-		private List<ConstructionPlan> CollectConstructionPlans()
+		private List<ServicePlan> CollectServicePlans()
 		{
-			var plans = new List<ConstructionPlan>();
+			var plans = new List<ServicePlan>();
 			var claimedServiceTypes = new HashSet<Type>();
 
 			foreach (var (concreteType, serviceAttribute) in AllServicesMap)
@@ -99,13 +119,8 @@ namespace QBS.ServiceLocator
 					continue;
 				}
 
-				if (!TrySelectConstructor(concreteType, out var constructor))
-				{
-					continue;
-				}
-
-				var plan = new ConstructionPlan(concreteType, serviceAttribute.ServiceType, constructor);
-				if (!TryPlanParameters(plan))
+				var plan = new ServicePlan(concreteType, serviceAttribute.ServiceType);
+				if (!TryPlanInjections(plan))
 				{
 					continue;
 				}
@@ -116,80 +131,65 @@ namespace QBS.ServiceLocator
 			return plans;
 		}
 
-		private static bool TrySelectConstructor(Type concreteType, out ConstructorInfo constructor)
+		/// <summary>
+		///     Collects the injected fields of a service and of everything it inherits, since a base class
+		///     may declare its own and a private field is not visible through a derived type.
+		/// </summary>
+		private bool TryPlanInjections(ServicePlan plan)
 		{
-			constructor = null;
-			var constructors = concreteType.GetConstructors(BindingFlags.Public | BindingFlags.Instance);
-
-			if (constructors.Length == 0)
+			for (var type = plan.ConcreteType; type != null && type != typeof(object); type = type.BaseType)
 			{
-				Log.Error($"{concreteType.FullName} has no public constructor, so it cannot be constructed. Skipping registration.");
-				return false;
-			}
-
-			if (constructors.Length == 1)
-			{
-				constructor = constructors[0];
-				return true;
-			}
-
-			foreach (var candidate in constructors)
-			{
-				if (!candidate.IsDefined(typeof(ServiceConstructorAttribute), false))
+				foreach (var field in type.GetFields(InjectableFields))
 				{
-					continue;
+					if (!field.IsDefined(typeof(InjectAttribute), false))
+					{
+						continue;
+					}
+
+					if (!TryPlanInjection(plan, field))
+					{
+						return false;
+					}
 				}
-
-				if (constructor != null)
-				{
-					Log.Error($"{concreteType.FullName} marks more than one constructor [ServiceConstructor]. Skipping registration.");
-					constructor = null;
-					return false;
-				}
-
-				constructor = candidate;
-			}
-
-			if (constructor == null)
-			{
-				Log.Error($"{concreteType.FullName} has {constructors.Length} public constructors; mark the one the locator should use with [ServiceConstructor]. Skipping registration.");
-				return false;
 			}
 
 			return true;
 		}
 
-		private bool TryPlanParameters(ConstructionPlan plan)
+		private bool TryPlanInjection(ServicePlan plan, FieldInfo field)
 		{
-			foreach (var parameter in plan.Constructor.GetParameters())
+			if (field.IsInitOnly)
 			{
-				var parameterType = parameter.ParameterType;
+				Log.Error($"{plan.ConcreteType.FullName}.{field.Name} is [Inject] and readonly. An injected field is written after the constructor has run, so it cannot be readonly. Skipping registration.");
+				return false;
+			}
 
-				if (!_attributeByServiceType.TryGetValue(parameterType, out var dependencyAttribute))
-				{
-					Log.Error($"{plan.ConcreteType.FullName} takes {parameterType.FullName}, which no service registers. A service constructor may only take service interfaces. Skipping registration.");
-					return false;
-				}
+			var fieldType = field.FieldType;
 
-				if (!IsResolvableFromHere(dependencyAttribute, out var isInThisContainer))
-				{
-					Log.Error($"{plan.ConcreteType.FullName} ({DescribeThisContainer()}) depends on {parameterType.FullName} ({DescribeScope(dependencyAttribute)}), which it cannot reach: a service may only depend on its own container or on Global. Skipping registration.");
-					return false;
-				}
+			if (!_attributeByServiceType.TryGetValue(fieldType, out var dependencyAttribute))
+			{
+				Log.Error($"{plan.ConcreteType.FullName}.{field.Name} is [Inject] but {fieldType.FullName} is not a service interface that any service registers. Skipping registration.");
+				return false;
+			}
 
-				plan.ParameterServiceTypes.Add(parameterType);
-				if (isInThisContainer)
-				{
-					plan.InContainerDependencies.Add(parameterType);
-				}
+			if (!IsResolvableFromHere(dependencyAttribute, out var isInThisContainer))
+			{
+				Log.Error($"{plan.ConcreteType.FullName} ({DescribeThisContainer()}) injects {fieldType.FullName} ({DescribeScope(dependencyAttribute)}), which it cannot reach: a service may only inject its own container or Global. Skipping registration.");
+				return false;
+			}
+
+			plan.Injections.Add(new InjectionSite(field, fieldType));
+			if (isInThisContainer)
+			{
+				plan.InContainerDependencies.Add(fieldType);
 			}
 
 			return true;
 		}
 
 		/// <summary>
-		///     Whether this container can hand a service of <paramref name="dependency" />'s lifetime to one of
-		///     its own. Global is the outer scope everything may reach; a scoped service may reach its own
+		///     Whether this container can hand a service of <paramref name="dependency" />'s lifetime to one
+		///     of its own. Global is the outer scope everything may reach; a scoped service may reach its own
 		///     context; Scene and PersistentScene services register themselves from Awake and are never
 		///     injected, because no discovered service can know when they exist.
 		/// </summary>
@@ -218,13 +218,13 @@ namespace QBS.ServiceLocator
 		}
 
 		/// <summary>
-		///     Kahn's algorithm over the dependencies inside this container. A plan whose dependency has no
-		///     plan of its own is dropped first, repeatedly, so a service is never constructed against
+		///     Kahn's algorithm over the injected dependencies inside this container. A plan whose
+		///     dependency has no plan of its own is dropped first, repeatedly, so a service never waits on
 		///     something that was itself skipped; whatever a cycle leaves behind is reported and dropped.
 		/// </summary>
-		private List<ConstructionPlan> SortByDependencyOrder(List<ConstructionPlan> plans)
+		private List<ServicePlan> SortByDependencyOrder(List<ServicePlan> plans)
 		{
-			var planByServiceType = new Dictionary<Type, ConstructionPlan>(plans.Count);
+			var planByServiceType = new Dictionary<Type, ServicePlan>(plans.Count);
 			foreach (var plan in plans)
 			{
 				planByServiceType[plan.ServiceType] = plan;
@@ -233,11 +233,11 @@ namespace QBS.ServiceLocator
 			DropPlansWithMissingDependencies(plans, planByServiceType);
 
 			var pendingDependencyCount = new Dictionary<Type, int>(plans.Count);
-			var dependents = new Dictionary<Type, List<ConstructionPlan>>(plans.Count);
+			var dependents = new Dictionary<Type, List<ServicePlan>>(plans.Count);
 			foreach (var plan in plans)
 			{
 				pendingDependencyCount[plan.ServiceType] = plan.InContainerDependencies.Count;
-				dependents[plan.ServiceType] = new List<ConstructionPlan>();
+				dependents[plan.ServiceType] = new List<ServicePlan>();
 			}
 
 			foreach (var plan in plans)
@@ -248,7 +248,7 @@ namespace QBS.ServiceLocator
 				}
 			}
 
-			var ready = new Queue<ConstructionPlan>();
+			var ready = new Queue<ServicePlan>();
 			foreach (var plan in plans)
 			{
 				if (pendingDependencyCount[plan.ServiceType] == 0)
@@ -257,7 +257,7 @@ namespace QBS.ServiceLocator
 				}
 			}
 
-			var ordered = new List<ConstructionPlan>(plans.Count);
+			var ordered = new List<ServicePlan>(plans.Count);
 			while (ready.Count > 0)
 			{
 				var plan = ready.Dequeue();
@@ -280,8 +280,8 @@ namespace QBS.ServiceLocator
 			return ordered;
 		}
 
-		private static void DropPlansWithMissingDependencies(List<ConstructionPlan> plans,
-			Dictionary<Type, ConstructionPlan> planByServiceType)
+		private static void DropPlansWithMissingDependencies(List<ServicePlan> plans,
+			Dictionary<Type, ServicePlan> planByServiceType)
 		{
 			bool droppedAny;
 			do
@@ -298,7 +298,7 @@ namespace QBS.ServiceLocator
 							continue;
 						}
 
-						Log.Error($"{plan.ConcreteType.FullName} cannot be constructed: {dependencyType.FullName} belongs to this container but was itself skipped. Skipping registration.");
+						Log.Error($"{plan.ConcreteType.FullName} cannot be initialized: {dependencyType.FullName}, which it injects, belongs to this container but was itself skipped. Skipping registration.");
 						plans.RemoveAt(i);
 						planByServiceType.Remove(plan.ServiceType);
 						droppedAny = true;
@@ -309,24 +309,24 @@ namespace QBS.ServiceLocator
 			while (droppedAny);
 		}
 
-		private static void ReportCycles(List<ConstructionPlan> plans, List<ConstructionPlan> ordered,
-			Dictionary<Type, ConstructionPlan> planByServiceType)
+		private static void ReportCycles(List<ServicePlan> plans, List<ServicePlan> ordered,
+			Dictionary<Type, ServicePlan> planByServiceType)
 		{
-			var constructed = new HashSet<Type>();
+			var sorted = new HashSet<Type>();
 			foreach (var plan in ordered)
 			{
-				constructed.Add(plan.ServiceType);
+				sorted.Add(plan.ServiceType);
 			}
 
 			foreach (var plan in plans)
 			{
-				if (constructed.Contains(plan.ServiceType))
+				if (sorted.Contains(plan.ServiceType))
 				{
 					continue;
 				}
 
-				var cycle = FindCycle(plan, planByServiceType, constructed);
-				Log.Error($"{plan.ConcreteType.FullName} is in a dependency cycle ({cycle}) and every service in it is skipped. A constructor parameter cannot express a mutual reference, because neither side can be built first. Drop the parameter on one side and fetch that service where it is used instead: registration happens before initialization, so the instance is already there.");
+				var cycle = FindCycle(plan, planByServiceType, sorted);
+				Log.Error($"{plan.ConcreteType.FullName} is in an [Inject] cycle ({cycle}) and every service in it is skipped. An injected field decides initialization order, so a mutual pair would each wait for the other forever. Drop [Inject] on one side and fetch that service where it is used instead: every service is constructed and registered before any is initialized, so the instance is already there.");
 			}
 		}
 
@@ -334,8 +334,8 @@ namespace QBS.ServiceLocator
 		///     Walks dependencies from <paramref name="start" /> until a type repeats, and names the loop in
 		///     the order it was walked, so the error points at the edge to remove rather than a set of types.
 		/// </summary>
-		private static string FindCycle(ConstructionPlan start, Dictionary<Type, ConstructionPlan> planByServiceType,
-			HashSet<Type> constructed)
+		private static string FindCycle(ServicePlan start, Dictionary<Type, ServicePlan> planByServiceType,
+			HashSet<Type> sorted)
 		{
 			var path = new List<Type>();
 			var visited = new HashSet<Type>();
@@ -345,10 +345,10 @@ namespace QBS.ServiceLocator
 			{
 				path.Add(current.ServiceType);
 
-				ConstructionPlan next = null;
+				ServicePlan next = null;
 				foreach (var dependencyType in current.InContainerDependencies)
 				{
-					if (constructed.Contains(dependencyType) || !planByServiceType.TryGetValue(dependencyType, out var candidate))
+					if (sorted.Contains(dependencyType) || !planByServiceType.TryGetValue(dependencyType, out var candidate))
 					{
 						continue;
 					}
@@ -370,49 +370,66 @@ namespace QBS.ServiceLocator
 			return string.Join(" -> ", names);
 		}
 
-		private void Construct(ConstructionPlan plan)
+		/// <summary>
+		///     Resolves what a service injects, constructs it, writes the fields and registers it. The
+		///     dependencies are resolved before the instance exists so that one that cannot be reached skips
+		///     the service rather than registering it with a null field.
+		/// </summary>
+		private bool TryBuild(ServicePlan plan, HashSet<Type> skipped, out BuiltService builtService)
 		{
+			builtService = default;
+
+			foreach (var dependencyType in plan.InContainerDependencies)
+			{
+				if (!skipped.Contains(dependencyType))
+				{
+					continue;
+				}
+
+				Log.Error($"{plan.ConcreteType.FullName} is skipped: {dependencyType.FullName}, which it injects, was itself skipped.");
+				skipped.Add(plan.ServiceType);
+				return false;
+			}
+
 			try
 			{
-				object serviceObject;
-
-				if (plan.ParameterServiceTypes.Count == 0)
+				var values = new object[plan.Injections.Count];
+				for (var i = 0; i < values.Length; i++)
 				{
-					serviceObject = Activator.CreateInstance(plan.ConcreteType);
-				}
-				else
-				{
-					var arguments = new object[plan.ParameterServiceTypes.Count];
-					for (var i = 0; i < arguments.Length; i++)
+					if (!TryResolveDependency(plan.Injections[i].ServiceType, out var dependency))
 					{
-						if (!TryResolveDependency(plan.ParameterServiceTypes[i], out var dependency))
-						{
-							Log.Error($"{plan.ConcreteType.FullName} cannot be constructed: {plan.ParameterServiceTypes[i].FullName} is registered but has no live instance. Skipping registration.");
-							return;
-						}
-
-						arguments[i] = dependency;
+						Log.Error($"{plan.ConcreteType.FullName} cannot be built: {plan.Injections[i].ServiceType.FullName} is registered but has no live instance. Skipping registration.");
+						skipped.Add(plan.ServiceType);
+						return false;
 					}
 
-					serviceObject = plan.Constructor.Invoke(arguments);
+					values[i] = dependency;
 				}
 
-				if (serviceObject is not IService serviceInstance)
+				if (Activator.CreateInstance(plan.ConcreteType) is not IService serviceInstance)
 				{
 					Log.Error($"Service {plan.ServiceType.FullName} does not implement IService");
-					return;
+					skipped.Add(plan.ServiceType);
+					return false;
+				}
+
+				for (var i = 0; i < values.Length; i++)
+				{
+					plan.Injections[i].Field.SetValue(serviceInstance, values[i]);
 				}
 
 				ContainedServices.Add(plan.ServiceType, serviceInstance);
-				_initializationOrder.Add(serviceInstance);
-				_inContainerDependencies[serviceInstance] = CollectDependencyInstances(plan);
+				builtService = new BuiltService(plan, serviceInstance);
+				return true;
 			}
 			catch (Exception e)
 			{
 				//Skip the offending service rather than rethrow: this runs under
 				//RuntimeInitializeOnLoadMethod, so propagating takes down the whole boot sequence
 				//and leaves every remaining service in this container unregistered.
-				Log.Error($"Exception constructing {plan.ConcreteType.FullName}, skipping registration: {e}");
+				Log.Error($"Exception building {plan.ConcreteType.FullName}, skipping registration: {e}");
+				skipped.Add(plan.ServiceType);
+				return false;
 			}
 		}
 
@@ -423,144 +440,154 @@ namespace QBS.ServiceLocator
 				return true;
 			}
 
-			//Not in this container, so it is the Global one: TryPlanParameters already refused anything else.
+			//Not in this container, so it is the Global one: TryPlanInjection already refused anything else.
 			return ServiceLocator.TryGetGlobalServiceForInjection(serviceType, out dependency);
 		}
 
-		private List<IService> CollectDependencyInstances(ConstructionPlan plan)
+		/// <summary>
+		///     Records who waits for whom, so a service that settles can release exactly the services that
+		///     were waiting on it.
+		/// </summary>
+		private void RecordDependencyGraph(List<BuiltService> built)
 		{
-			var dependencies = new List<IService>(plan.InContainerDependencies.Count);
-			foreach (var dependencyType in plan.InContainerDependencies)
+			foreach (var entry in built)
 			{
-				if (ContainedServices.TryGetValue(dependencyType, out var dependency))
-				{
-					dependencies.Add(dependency);
-				}
+				_initializationCandidates.Add(entry.Instance);
+				_dependents[entry.Instance] = new List<IService>();
 			}
 
-			return dependencies;
+			foreach (var entry in built)
+			{
+				var dependencies = new List<IService>(entry.Plan.InContainerDependencies.Count);
+				foreach (var dependencyType in entry.Plan.InContainerDependencies)
+				{
+					if (ContainedServices.TryGetValue(dependencyType, out var dependency))
+					{
+						dependencies.Add(dependency);
+					}
+				}
+
+				_inContainerDependencies[entry.Instance] = dependencies;
+				_pendingDependencies[entry.Instance] = dependencies.Count;
+			}
+
+			foreach (var entry in built)
+			{
+				foreach (var dependency in _inContainerDependencies[entry.Instance])
+				{
+					_dependents[dependency].Add(entry.Instance);
+				}
+			}
 		}
 
 		/// <summary>
-		///     Initializes services so that nothing runs before what it was handed: the synchronous ones
-		///     inline, in construction order, then the asynchronous ones a level at a time, where a level is
-		///     everything whose dependencies finished in an earlier one. Services in a level still run
-		///     concurrently. Invokes ContainerServicesInitialized once they have all settled.
+		///     Starts every service that waits for nothing. Each one that settles releases the services
+		///     waiting on it, so a service begins the moment its own dependencies are done rather than when
+		///     some batch it happens to share a depth with is: an unrelated slow service never holds it up.
+		///     Invokes ContainerServicesInitialized once every service has settled.
 		/// </summary>
 		private void InitializeServices()
 		{
-			InitializeSyncServices();
-
-			var asyncLevels = BuildAsyncLevels();
-			if (asyncLevels.Count == 0)
+			foreach (var serviceInstance in _initializationCandidates)
 			{
-				ContainerInitialized = true;
-				ContainerServicesInitialized?.Invoke();
-				return;
+				if (_pendingDependencies[serviceInstance] == 0)
+				{
+					_readyToInitialize.Enqueue(serviceInstance);
+				}
 			}
 
-			// Initialize services that require time to be setup
-			// but do not block main thread.
-			InitializeAsyncLevels(asyncLevels).Forget();
+			DrainReadyQueue();
 		}
 
-		private void InitializeSyncServices()
+		/// <summary>
+		///     Runs everything currently unblocked. A synchronous service settles inside the loop and can
+		///     release more work, so this drains rather than iterating a snapshot; an asynchronous one
+		///     settles later and drains again from its own continuation.
+		/// </summary>
+		private void DrainReadyQueue()
 		{
-			foreach (var serviceInstance in _initializationOrder)
+			while (_readyToInitialize.Count > 0)
 			{
-				if (serviceInstance.IsAsyncInit)
+				var serviceInstance = _readyToInitialize.Dequeue();
+
+				if (HasFailedDependency(serviceInstance, _inContainerDependencies[serviceInstance]))
 				{
+					OnServiceSettled(serviceInstance);
 					continue;
 				}
 
-				var dependencies = _inContainerDependencies[serviceInstance];
-				if (HasFailedDependency(serviceInstance, dependencies) || HasAsyncDependency(serviceInstance, dependencies))
+				if (serviceInstance.IsAsyncInit)
 				{
+					InitializeAsync(serviceInstance).Forget();
 					continue;
 				}
 
 				serviceInstance.Initialize();
+				OnServiceSettled(serviceInstance);
 			}
+
+			TryCompleteContainer();
 		}
 
 		/// <summary>
-		///     Groups the async services by how deep their async dependencies run: level 0 waits for nothing
-		///     in this container, level 1 for level 0, and so on. Construction order is topological, so a
-		///     dependency's level is always known by the time its dependent is reached.
+		///     Awaits one service's initialization and nothing else. Every task is awaited exactly once,
+		///     here: a UniTask carries a single continuation, so a dependent waiting on its dependency's
+		///     task would be a second registration on it. Dependents are released by the counter instead.
 		/// </summary>
-		private List<List<IService>> BuildAsyncLevels()
-		{
-			var levels = new List<List<IService>>();
-			var levelByService = new Dictionary<IService, int>();
-
-			foreach (var serviceInstance in _initializationOrder)
-			{
-				if (!serviceInstance.IsAsyncInit)
-				{
-					continue;
-				}
-
-				var level = 0;
-				foreach (var dependency in _inContainerDependencies[serviceInstance])
-				{
-					//Sync dependencies are absent from the map: they are all initialized before any of this.
-					if (levelByService.TryGetValue(dependency, out var dependencyLevel))
-					{
-						level = Math.Max(level, dependencyLevel + 1);
-					}
-				}
-
-				levelByService[serviceInstance] = level;
-				while (levels.Count <= level)
-				{
-					levels.Add(new List<IService>());
-				}
-
-				levels[level].Add(serviceInstance);
-			}
-
-			return levels;
-		}
-
-		/// <summary>
-		///     Runs each level to completion before starting the next. Every task is awaited exactly once,
-		///     by the WhenAll for its own level: a UniTask carries a single continuation, so having each
-		///     dependent await its dependency's task as well would be a second registration on it.
-		/// </summary>
-		private async UniTaskVoid InitializeAsyncLevels(List<List<IService>> levels)
+		private async UniTaskVoid InitializeAsync(IService serviceInstance)
 		{
 			try
 			{
-				foreach (var level in levels)
-				{
-					var running = new List<UniTask>(level.Count);
-					foreach (var serviceInstance in level)
-					{
-						if (HasFailedDependency(serviceInstance, _inContainerDependencies[serviceInstance]))
-						{
-							continue;
-						}
-
-						running.Add(serviceInstance.InitializeAsyncWrapper());
-					}
-
-					if (running.Count > 0)
-					{
-						await UniTask.WhenAll(running);
-					}
-				}
-
-				ContainerInitialized = true;
-				ContainerServicesInitialized?.Invoke();
+				await serviceInstance.InitializeAsyncWrapper();
 			}
 			catch (Exception e)
 			{
 				Log.Error(e.ToString());
 			}
+
+			//The container can be disposed while this was running: a context purged, or a scene torn
+			//down, or a test starting over. There is no graph left to release anything into, and the
+			//service this finished initializing is no longer registered anywhere.
+			if (_disposed)
+			{
+				return;
+			}
+
+			OnServiceSettled(serviceInstance);
+			DrainReadyQueue();
 		}
 
 		/// <summary>
-		///     Whether something this service was handed has already failed, in which case it is Failed too
+		///     One service has finished, succeeded or failed. Anything left waiting only on it is now ready;
+		///     a service released after a failure is marked Failed by <see cref="HasFailedDependency" />
+		///     rather than run, and settles in turn so the failure reaches its own dependents.
+		/// </summary>
+		private void OnServiceSettled(IService serviceInstance)
+		{
+			_settledCount++;
+
+			foreach (var dependent in _dependents[serviceInstance])
+			{
+				if (--_pendingDependencies[dependent] == 0)
+				{
+					_readyToInitialize.Enqueue(dependent);
+				}
+			}
+		}
+
+		private void TryCompleteContainer()
+		{
+			if (_disposed || ContainerInitialized || _settledCount < _initializationCandidates.Count)
+			{
+				return;
+			}
+
+			ContainerInitialized = true;
+			ContainerServicesInitialized?.Invoke();
+		}
+
+		/// <summary>
+		///     Whether something this service injected has already failed, in which case it is Failed too
 		///     and its own initialization never runs.
 		/// </summary>
 		private static bool HasFailedDependency(IService serviceInstance, List<IService> dependencies)
@@ -579,53 +606,58 @@ namespace QBS.ServiceLocator
 			return false;
 		}
 
-		/// <summary>
-		///     The one ordering the runtime cannot honour: a synchronous service cannot wait for an async
-		///     dependency without blocking the main thread, and running it anyway would hand it something
-		///     that is not ready. Failed, with an error saying to make it async.
-		/// </summary>
-		private static bool HasAsyncDependency(IService serviceInstance, List<IService> dependencies)
-		{
-			foreach (var dependency in dependencies)
-			{
-				if (!dependency.IsAsyncInit)
-				{
-					continue;
-				}
-
-				serviceInstance.MarkFailed($"{serviceInstance.GetType().FullName} is sync-init but depends on async-init {dependency.GetType().FullName}; make it async. It is not initialized.");
-				return true;
-			}
-
-			return false;
-		}
-
 		public override void DisposeContainer()
 		{
+			_disposed = true;
 			base.DisposeContainer();
-			_initializationOrder.Clear();
 			_inContainerDependencies.Clear();
+			_dependents.Clear();
+			_pendingDependencies.Clear();
+			_initializationCandidates.Clear();
+			_readyToInitialize.Clear();
+			_settledCount = 0;
 			ContainerServicesInitialized = null;
 		}
 
 		/// <summary>
-		///     One service's route from its attribute to a live instance: the constructor to call and the
-		///     services to hand it, split into the ones this container must construct first and the outer
-		///     ones that already exist.
+		///     One service's route from its attribute to a live instance: the fields to fill, and which of
+		///     them name services this container must build first rather than outer ones that already exist.
 		/// </summary>
-		private class ConstructionPlan
+		private class ServicePlan
 		{
 			public readonly Type ConcreteType;
 			public readonly Type ServiceType;
-			public readonly ConstructorInfo Constructor;
-			public readonly List<Type> ParameterServiceTypes = new();
+			public readonly List<InjectionSite> Injections = new();
 			public readonly List<Type> InContainerDependencies = new();
 
-			public ConstructionPlan(Type concreteType, Type serviceType, ConstructorInfo constructor)
+			public ServicePlan(Type concreteType, Type serviceType)
 			{
 				ConcreteType = concreteType;
 				ServiceType = serviceType;
-				Constructor = constructor;
+			}
+		}
+
+		private readonly struct InjectionSite
+		{
+			public readonly FieldInfo Field;
+			public readonly Type ServiceType;
+
+			public InjectionSite(FieldInfo field, Type serviceType)
+			{
+				Field = field;
+				ServiceType = serviceType;
+			}
+		}
+
+		private readonly struct BuiltService
+		{
+			public readonly ServicePlan Plan;
+			public readonly IService Instance;
+
+			public BuiltService(ServicePlan plan, IService instance)
+			{
+				Plan = plan;
+				Instance = instance;
 			}
 		}
 

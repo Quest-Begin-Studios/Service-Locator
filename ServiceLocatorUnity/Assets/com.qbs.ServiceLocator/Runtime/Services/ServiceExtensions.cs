@@ -145,7 +145,7 @@ namespace QBS.ServiceLocator
             }
 
             // Polls ConfigState instead of re-awaiting state.AsyncInitTask directly: that task is
-            // already being awaited by the container's own HandleAsyncInitializations via UniTask.WhenAll
+            // already awaited by the container, and a UniTask carries a single continuation
             var stopwatch = Stopwatch.StartNew();
             var maxWaitMilliseconds = (long) (maxWait * 1000);
             while (state.ConfigState == ConfigurationState.InProgress && stopwatch.ElapsedMilliseconds < maxWaitMilliseconds)

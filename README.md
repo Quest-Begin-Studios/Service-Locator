@@ -81,60 +81,70 @@ Clone or download the repository, then reference it by local path:
 
 ## Declaring dependencies
 
-A service may take the services it needs as constructor parameters. The container resolves them, builds
-in dependency order, and initializes in that same order, so a dependency is always initialized before the
-service that was handed it.
+A service declares what it needs with `[Inject]` on a field. The container constructs every service
+first, fills the injected fields, and then initializes each service as soon as everything it injected
+has finished initializing.
 
 ```csharp
 [Service(Lifetime.Global, typeof(IInventoryService))]
 public class InventoryService : IInventoryService
 {
-    private readonly ISaveService _save;
-
-    public InventoryService(ISaveService save) => _save = save;
+    [Inject] private ISaveService _save = default;
 
     public bool IsAsyncInit => false;
+
+    bool IService.InitializeService()
+    {
+        //_save is filled, and already initialized, by the time this runs.
+        return _save.Load("inventory");
+    }
 }
 ```
 
+The `= default` is only there to silence CS0649: nothing in your own code assigns the field, so the
+compiler warns that it will always be null. A `csc.rsp` containing `-nowarn:0649` removes the need for
+it project-wide.
+
 The rules, each of which is an error that skips the service rather than a surprise at runtime:
 
-- A parameter must be an interface that some service registers.
+- The field's type must be an interface that some service registers.
 - It must be reachable: Global from anywhere, a context's own services from that context. A sibling
   context is not reachable, and neither are Scene or PersistentScene services, which register themselves
   from `Awake` — nothing discovered can know when they exist. Those stay on `Fetch*`.
-- Several public constructors need `[ServiceConstructor]` on the one to use.
+- The field cannot be `readonly`, because it is written after the constructor has run.
 - A cycle is reported with the loop named, and every service in it is skipped.
-- A synchronous service cannot depend on an asynchronous one; make it async. Waiting for it would mean
-  blocking the main thread.
 
-### Not every dependency belongs in a constructor
+Initialization follows the graph rather than any batching: a service starts the moment the services it
+injected have settled, so an unrelated slow service never holds it up. A **synchronous** service may
+inject an asynchronous one — the container simply withholds it until the dependency is done, so it
+never waits on anything itself and never blocks the main thread.
 
-A constructor parameter says *I cannot be built without this*. That is why two services that need each
-other cannot both declare it: neither can be constructed first, so the cycle rule above skips both, and
-no amount of ordering can fix it.
+### Injecting is not the only way to reach a service
 
-A reference a service uses *after* boot rather than *during* construction is not that kind of
-dependency. Leave it out of the constructor and fetch it at the point of use. Registration happens
-before initialization, so the instance is there by the time any of your code runs, and two services can
-hold each other perfectly well that way.
+`[Inject]` says *do not initialize me until this one is ready*. That is the stronger of the two claims,
+and it is why two services cannot inject each other: each would wait for the other forever, so the cycle
+rule skips both.
+
+When a service only needs the **reference** — to use later, at some point after boot — fetch it where it
+is used instead. Every service is constructed and registered before any of them is initialized, so the
+instance is always there, and two services can hold each other perfectly well this way.
 
 ```csharp
 [Service(Lifetime.Global, typeof(IQuestService))]
 public class QuestService : IQuestService
 {
-    //Not a constructor parameter: IInventoryService fetches this one back, and a pair of parameters
-    //would be a cycle neither side could be built out of.
+    //Not injected: InventoryService reaches back for this one, and a mutual [Inject] pair would be a
+    //cycle that skips them both.
     public void Grant(Reward reward) => ServiceLocator.FetchGlobalService<IInventoryService>().Add(reward);
 
     public bool IsAsyncInit => false;
 }
 ```
 
-The rule of thumb: take it as a parameter when you need it to be *initialized* before you are, and fetch
-it at use time when you only need it to *exist*.
+The rule of thumb: **inject it when you need it initialized before you are; fetch it when you only need
+it to exist.**
 
-A parameterless constructor keeps working exactly as before, `Fetch*` included.
+A service with no injected field waits for nothing, and `Fetch*` works exactly as it always did.
 
 ## Quick Start
 
