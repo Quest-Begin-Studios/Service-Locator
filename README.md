@@ -20,7 +20,41 @@ A lightweight, reflection-driven Service Locator for Unity. Provides centralized
 
 ## Installation
 
+**A project names every dependency itself.** UPM does not resolve a git package's own dependencies
+transitively, and a `dependencies` entry in `package.json` cannot be a git URL, so this package declares
+QBS Core and UniTask as version ranges and leaves it to the project manifest to supply them. Adding only
+the locator fails with `Package [com.qbs.core@1.1.1] cannot be found`.
+
+### Via `manifest.json`
+
+Open `Packages/manifest.json` and add all three. This is the layout this repository's own Unity project
+uses: UniTask through the OpenUPM scoped registry, QBS Core and the locator by git URL.
+
+```json
+{
+  "scopedRegistries": [
+    {
+      "name": "OpenUPM",
+      "url": "https://package.openupm.com",
+      "scopes": [
+        "com.cysharp.unitask"
+      ]
+    }
+  ],
+  "dependencies": {
+    "com.cysharp.unitask": "2.5.11",
+    "com.qbs.core": "https://github.com/Quest-Begin-Studios/QBS-Core.git?path=/CoreUnity/Assets/com.qbs.core",
+    "com.qbs.service-locator": "https://github.com/Quest-Begin-Studios/Service-Locator.git?path=ServiceLocatorUnity/Assets/com.qbs.ServiceLocator"
+  }
+}
+```
+
+Append a tag to either git URL to pin a release: `#v2.1.0` for the locator, `#v1.1.1` or later for QBS
+Core — an earlier core revision has no `AssemblyCompat`, and the locator will not compile against it.
+
 ### Via Unity Package Manager (Git URL)
+
+Add the two git URLs above in order — QBS Core first, then the locator — with UniTask already installed:
 
 1. Open **Window → Package Manager**
 2. Click **+** → **Add package from git URL…**
@@ -28,20 +62,6 @@ A lightweight, reflection-driven Service Locator for Unity. Provides centralized
 
 ```
 https://github.com/Quest-Begin-Studios/Service-Locator.git?path=ServiceLocatorUnity/Assets/com.qbs.ServiceLocator
-```
-
-To pin a specific release append `#v2.0.1` to the URL.
-
-### Via `manifest.json`
-
-Open `Packages/manifest.json` and add an entry under `dependencies`:
-
-```json
-{
-  "dependencies": {
-    "com.qbs.service-locator": "https://github.com/Quest-Begin-Studios/Service-Locator.git?path=ServiceLocatorUnity/Assets/com.qbs.ServiceLocator"
-  }
-}
 ```
 
 ### Local path
