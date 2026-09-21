@@ -102,7 +102,7 @@ namespace QBS.ServiceLocator.Tests
         public string Owner => "default";
     }
 
-    [Service(Lifetime.Global, typeof(IPriorityTestService), 100)]
+    [Service(Lifetime.Global, typeof(IPriorityTestService), ServicePriority.Override)]
     public class PriorityOverrideTestService : IPriorityTestService
     {
         public bool IsAsyncInit => false;
@@ -114,7 +114,7 @@ namespace QBS.ServiceLocator.Tests
         string Owner { get; }
     }
 
-    [Service(Lifetime.Global, typeof(IReversedPriorityTestService), 100)]
+    [Service(Lifetime.Global, typeof(IReversedPriorityTestService), ServicePriority.Override)]
     public class ReversedPriorityOverrideTestService : IReversedPriorityTestService
     {
         public bool IsAsyncInit => false;
@@ -126,6 +126,34 @@ namespace QBS.ServiceLocator.Tests
     {
         public bool IsAsyncInit => false;
         public string Owner => "default";
+    }
+
+    public interface IThreeTierTestService : IService
+    {
+        string Owner { get; }
+    }
+
+    // The whole ladder, so the rule being asserted is the enum's declaration order rather than one
+    // comparison that would also hold for any two members.
+    [Service(Lifetime.Global, typeof(IThreeTierTestService))]
+    public class ThreeTierDefaultTestService : IThreeTierTestService
+    {
+        public bool IsAsyncInit => false;
+        public string Owner => "default";
+    }
+
+    [Service(Lifetime.Global, typeof(IThreeTierTestService), ServicePriority.Override)]
+    public class ThreeTierOverrideTestService : IThreeTierTestService
+    {
+        public bool IsAsyncInit => false;
+        public string Owner => "override";
+    }
+
+    [Service(Lifetime.Global, typeof(IThreeTierTestService), ServicePriority.Tests)]
+    public class ThreeTierTestsTestService : IThreeTierTestService
+    {
+        public bool IsAsyncInit => false;
+        public string Owner => "tests";
     }
 
     public interface IScopedPriorityTestService : IService
@@ -143,7 +171,7 @@ namespace QBS.ServiceLocator.Tests
         public string Owner => "default";
     }
 
-    [Service(42005, typeof(IScopedPriorityTestService), 100)]
+    [Service(42005, typeof(IScopedPriorityTestService), ServicePriority.Override)]
     public class ScopedPriorityOverrideTestService : IScopedPriorityTestService
     {
         public bool IsAsyncInit => false;
@@ -348,6 +376,13 @@ namespace QBS.ServiceLocator.Tests
 
             Assert.IsTrue(ServiceLocator.TryGetGlobalService<IReversedPriorityTestService>(out var overrideDeclaredFirst));
             Assert.AreEqual("override", overrideDeclaredFirst.Owner);
+        }
+
+        [Test]
+        public void GameStart_TestsPriority_OutranksBothOverrideAndDefault()
+        {
+            Assert.IsTrue(ServiceLocator.TryGetGlobalService<IThreeTierTestService>(out var service));
+            Assert.AreEqual("tests", service.Owner);
         }
 
         [Test]
