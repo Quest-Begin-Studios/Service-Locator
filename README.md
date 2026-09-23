@@ -20,7 +20,44 @@ A lightweight, reflection-driven Service Locator for Unity. Provides centralized
 
 ## Installation
 
+**A project names every dependency itself.** UPM does not resolve a git package's own dependencies
+transitively, and a `dependencies` entry in `package.json` cannot be a git URL. QBS Core is therefore not
+declared there at all: it is deliberately unpinned, so the locator takes whichever revision the project
+supplies and stays current with Core by default. A project that adds only the locator fails to compile on
+the missing `QBS.Core` assembly rather than reporting a missing package, so add both.
+
+### Via `manifest.json`
+
+Open `Packages/manifest.json` and add all three. This is the layout this repository's own Unity project
+uses: UniTask through the OpenUPM scoped registry, QBS Core and the locator by git URL.
+
+```json
+{
+  "scopedRegistries": [
+    {
+      "name": "OpenUPM",
+      "url": "https://package.openupm.com",
+      "scopes": [
+        "com.cysharp.unitask"
+      ]
+    }
+  ],
+  "dependencies": {
+    "com.cysharp.unitask": "2.5.11",
+    "com.qbs.core": "https://github.com/Quest-Begin-Studios/QBS-Core.git?path=/CoreUnity/Assets/com.qbs.core",
+    "com.qbs.service-locator": "https://github.com/Quest-Begin-Studios/Service-Locator.git?path=ServiceLocatorUnity/Assets/com.qbs.ServiceLocator"
+  }
+}
+```
+
+Leave the QBS Core URL untagged, as above, to track its latest revision — that is the intended setup, and
+the locator is kept working against Core's default branch. Pin it with `#v1.1.1` or later only when you
+need a fixed revision; anything earlier has no `AssemblyCompat`, which service discovery needs. Append
+`#v2.1.0` to the locator's own URL to pin it to a release.
+
 ### Via Unity Package Manager (Git URL)
+
+Add the two git URLs above in order — QBS Core first, then the locator — with UniTask already installed:
 
 1. Open **Window → Package Manager**
 2. Click **+** → **Add package from git URL…**
@@ -28,20 +65,6 @@ A lightweight, reflection-driven Service Locator for Unity. Provides centralized
 
 ```
 https://github.com/Quest-Begin-Studios/Service-Locator.git?path=ServiceLocatorUnity/Assets/com.qbs.ServiceLocator
-```
-
-To pin a specific release append `#v2.0.1` to the URL.
-
-### Via `manifest.json`
-
-Open `Packages/manifest.json` and add an entry under `dependencies`:
-
-```json
-{
-  "dependencies": {
-    "com.qbs.service-locator": "https://github.com/Quest-Begin-Studios/Service-Locator.git?path=ServiceLocatorUnity/Assets/com.qbs.ServiceLocator"
-  }
-}
 ```
 
 ### Local path
@@ -55,6 +78,73 @@ Clone or download the repository, then reference it by local path:
   }
 }
 ```
+
+## Declaring dependencies
+
+A service declares what it needs with `[Inject]` on a field. The container constructs every service
+first, fills the injected fields, and then initializes each service as soon as everything it injected
+has finished initializing.
+
+```csharp
+[Service(Lifetime.Global, typeof(IInventoryService))]
+public class InventoryService : IInventoryService
+{
+    [Inject] private ISaveService _save = default;
+
+    public bool IsAsyncInit => false;
+
+    bool IService.InitializeService()
+    {
+        //_save is filled, and already initialized, by the time this runs.
+        return _save.Load("inventory");
+    }
+}
+```
+
+The `= default` is only there to silence CS0649: nothing in your own code assigns the field, so the
+compiler warns that it will always be null. A `csc.rsp` containing `-nowarn:0649` removes the need for
+it project-wide.
+
+The rules, each of which is an error that skips the service rather than a surprise at runtime:
+
+- The field's type must be an interface that some service registers.
+- It must be reachable: Global from anywhere, a context's own services from that context. A sibling
+  context is not reachable, and neither are Scene or PersistentScene services, which register themselves
+  from `Awake` — nothing discovered can know when they exist. Those stay on `Fetch*`.
+- The field cannot be `readonly`, because it is written after the constructor has run.
+- A cycle is reported with the loop named, and every service in it is skipped.
+
+Initialization follows the graph rather than any batching: a service starts the moment the services it
+injected have settled, so an unrelated slow service never holds it up. A **synchronous** service may
+inject an asynchronous one — the container simply withholds it until the dependency is done, so it
+never waits on anything itself and never blocks the main thread.
+
+### Injecting is not the only way to reach a service
+
+`[Inject]` says *do not initialize me until this one is ready*. That is the stronger of the two claims,
+and it is why two services cannot inject each other: each would wait for the other forever, so the cycle
+rule skips both.
+
+When a service only needs the **reference** — to use later, at some point after boot — fetch it where it
+is used instead. Every service is constructed and registered before any of them is initialized, so the
+instance is always there, and two services can hold each other perfectly well this way.
+
+```csharp
+[Service(Lifetime.Global, typeof(IQuestService))]
+public class QuestService : IQuestService
+{
+    //Not injected: InventoryService reaches back for this one, and a mutual [Inject] pair would be a
+    //cycle that skips them both.
+    public void Grant(Reward reward) => ServiceLocator.FetchGlobalService<IInventoryService>().Add(reward);
+
+    public bool IsAsyncInit => false;
+}
+```
+
+The rule of thumb: **inject it when you need it initialized before you are; fetch it when you only need
+it to exist.**
+
+A service with no injected field waits for nothing, and `Fetch*` works exactly as it always did.
 
 ## Quick Start
 

@@ -85,6 +85,27 @@ namespace QBS.ServiceLocator
             return task;
         }
 
+        /// <summary>
+        ///     Records that a service was never initialized because something it depends on failed. The
+        ///     dependent is Failed too, so a consumer sees a state rather than a service that quietly never
+        ///     ran, and the log names the cause rather than the symptom.
+        /// </summary>
+        internal static void MarkFailedByDependency(this IService service, IService dependency)
+        {
+            service.MarkFailed($"{service.GetType().FullName} was not initialized: {dependency.GetType().FullName}, which it depends on, failed to initialize.");
+        }
+
+        /// <summary>
+        ///     Records that a service was never initialized, with the reason. Failed rather than left
+        ///     Uninitialized, so a consumer polling the state sees a decision instead of a service that
+        ///     looks like it has not got around to starting yet.
+        /// </summary>
+        internal static void MarkFailed(this IService service, string reason)
+        {
+            _stateTable.GetOrCreateValue(service).ConfigState = ConfigurationState.Failed;
+            Log.Error(reason);
+        }
+
         private static async UniTask InitializeAsync(IService service, ServiceState state)
         {
             state.ConfigState = ConfigurationState.InProgress;
@@ -124,7 +145,7 @@ namespace QBS.ServiceLocator
             }
 
             // Polls ConfigState instead of re-awaiting state.AsyncInitTask directly: that task is
-            // already being awaited by the container's own HandleAsyncInitializations via UniTask.WhenAll
+            // already awaited by the container, and a UniTask carries a single continuation
             var stopwatch = Stopwatch.StartNew();
             var maxWaitMilliseconds = (long) (maxWait * 1000);
             while (state.ConfigState == ConfigurationState.InProgress && stopwatch.ElapsedMilliseconds < maxWaitMilliseconds)

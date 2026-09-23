@@ -4,6 +4,38 @@ All notable changes to this package are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-09-21
+
+### Added
+
+- **`[Inject]` fields.** A discovered service may declare its dependencies by marking fields `[Inject]` instead of calling `Fetch*` inside `InitializeService`. The container constructs every service of the lifetime, fills those fields, and only then initializes anything, so an injected field is never null and never half-initialized when `InitializeService` runs. Declaring a dependency is now a statement about *initialization order*, which is what the ordering actually needs; a service that only wants the reference keeps fetching it at the point of use. Fields are collected from base classes too, since a private field is not visible through a derived type.
+- **Dependency-ordered initialization.** Every service that injected nothing starts at once, and each service that settles releases the services waiting on it, so a service begins the moment its own dependencies are done rather than when a batch it happens to share a depth with is. Independent work runs in parallel and a slow service delays only what actually depends on it. Each initialization task is awaited exactly once, by the service's own runner: a UniTask carries a single continuation, so dependents are released by a counter rather than by awaiting someone else's task.
+- **Failure propagation.** When a dependency's initialization fails, its dependents are marked `Failed` without being initialized, and the log names the dependency rather than the symptom. Previously a dependent ran against a half-initialized dependency.
+
+### Changed
+
+- **A synchronous service may now depend on an asynchronous one.** The container withholds it until the dependency has settled and then runs it, so it never waits and never blocks the main thread. Previously this was the one ordering the runtime could not honour and the dependent was marked `Failed`. `IsAsyncInit` now describes only whether a service's own work is asynchronous, rather than doubling as a claim about what it waits for.
+- An injected field's type must be an interface some service registers, and must be reachable from the service's own container: Global for anything, or the service's own context for a `ScopedContext` service. Anything else — a concrete type, a `string`, a sibling context, a Scene or PersistentScene service — is an error at discovery and the service is skipped. Scene and PersistentScene services register themselves from `Awake` and are never injected, because no discovered service can know when they exist.
+- An injected field cannot be `readonly`. The container writes it after the constructor has run, and writing an initonly field by reflection is not something every runtime honours; it is refused at discovery rather than left to fail on one platform.
+- A cycle among injected fields is reported with the loop spelled out (`IA -> IB -> IA`) and every service in it is skipped; the rest of the container is unaffected. The error names the way out, which is to drop `[Inject]` on one side and fetch that service where it is used.
+
+## [2.1.0] - 2026-09-21
+
+### Added
+
+- `ServicePriority` (`Default`, `Override`, `Tests`) and `ServiceAttribute.Priority`, an optional third argument on both constructors defaulting to `ServicePriority.Default`. When two concrete types claim the same `ServiceType`, the higher priority wins and assembly enumeration order no longer decides which one: the lower-priority type is skipped silently, and a higher-priority type evicts an owner the scan happened to meet first. Equal priorities remain an error that keeps the first type met, so neither two packages nor two game services can silently fight over one interface. Precedence is the declaration order of the enum, so a tier can be added later without renumbering anything: a package ships `Default`, a game replaces it with `Override`, a test fake takes `Tests`.
+
+### Changed
+
+- `ServiceAttribute` derives from `UnityEngine.Scripting.PreserveAttribute`, so managed stripping keeps every type marked `[Service]` and the constructor discovery calls on it. A service is found by reflection and referenced statically by nothing, which is precisely what the linker deletes; measured on 6000.5.1f1 at stripping High, a plain `[Service]` type is gone from the player assembly and one whose attribute derives from `PreserveAttribute` survives with its members. Nothing in consuming code changes, and no `link.xml` is needed. `AttributeUsage` is now declared explicitly on `ServiceAttribute` so it does not adopt `PreserveAttribute`'s `Inherited = false`, which would have quietly changed how discovery reads the attribute.
+- `FetchGlobalService`, `TryGetGlobalService` and `IsGlobalContainerInitialized` throw `InvalidOperationException` naming `GameStart()` when the Global container does not exist yet, instead of dereferencing null. Calling before `SubsystemRegistration`, or from an EditMode test that never started the locator, now reports the reason rather than a `NullReferenceException` from inside the package.
+- `SceneServiceContainer.RegisterService<T>` names the already-registered concrete type and the priority its attribute won at, so a scene override that did not take effect is visible in the error.
+
+### Fixed
+
+- The unresolvable `com.qbs.core` git URL is gone from `dependencies`. UPM only resolves a `dependencies` entry against a registry or against a package the project manifest already names, and a git URL is neither. The entry is dropped rather than replaced with a version range: the locator is meant to track Core's latest revision, and a floor in the metadata is one more number to remember to bump. Consuming projects list `com.qbs.core` in their own `Packages/manifest.json` — untagged, to stay current — as the README now shows.
+- `ImplementsDisposeCorrectly` no longer skips every service in a player built at a high IL2CPP stripping level. `Type.GetInterfaceMap` is unavailable there and the throw propagated out of discovery; it is now wrapped, logs a warning naming the type, and assumes the implementation is correct.
+
 ## [2.0.1] - 2026-09-10
 
 ### Fixed

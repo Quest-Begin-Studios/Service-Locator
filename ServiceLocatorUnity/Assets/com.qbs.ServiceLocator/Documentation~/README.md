@@ -10,6 +10,7 @@ A reflection-driven Service Locator for Unity with automatic service discovery, 
 - [Global Services](#global-services)
 - [ScopedContext Services](#scopedcontext-services)
 - [Scene Services](#scene-services)
+- [Declaring Dependencies](#declaring-dependencies)
 - [Async Initialization](#async-initialization)
 - [Container Events](#container-events)
 - [Safe Retrieval](#safe-retrieval)
@@ -306,9 +307,75 @@ ServiceLocator.SceneServiceRegistered += (scene, serviceType, service) => { /* i
 
 ---
 
+## Declaring Dependencies
+
+A service declares what it needs with `[Inject]` on a field. The container constructs every service of the lifetime first, fills the injected fields, and then initializes each service as soon as everything it injected has finished initializing.
+
+```csharp
+[ServiceAttribute(Lifetime.Global, typeof(IInventoryService))]
+public class InventoryService : IInventoryService
+{
+    [Inject] private ISaveService _save = default;
+
+    public bool IsAsyncInit => false;
+
+    bool IService.InitializeService()
+    {
+        // _save is filled, and already initialized, by the time this runs.
+        return _save.Load("inventory");
+    }
+}
+```
+
+The `= default` only silences CS0649 — nothing in your own code assigns the field, so the compiler warns it will always be null. A `csc.rsp` with `-nowarn:0649` removes the need for it project-wide.
+
+Injection is opt-in: a service with no injected field waits for nothing and keeps using `Fetch*` exactly as before.
+
+### What can be injected
+
+- The field's type must be an **interface that some service registers**. A concrete type or a plain value is not resolvable.
+- It must be **reachable from the container being built** — Global services from anywhere, a context's own services from that context.
+- A **sibling context** is not reachable. Neither are **Scene** and **PersistentScene** services, which register themselves from `Awake`; nothing discovered at startup can know when they will exist. Those stay on `Fetch*`.
+- The field cannot be **`readonly`**, because the container writes it after the constructor has run.
+
+Each of these skips the service and says why, rather than leaving a null to surface somewhere else.
+
+### Injecting is not the only way to reach a service
+
+`[Inject]` says *do not initialize me until this one is ready*. That is the stronger of the two claims, and it is why two services cannot inject each other — each would wait for the other forever, so both are skipped and the cycle is named:
+
+```
+QuestService is in an [Inject] cycle (IQuestService -> IInventoryService -> IQuestService) and every
+service in it is skipped. An injected field decides initialization order, so a mutual pair would each
+wait for the other forever. Drop [Inject] on one side and fetch that service where it is used instead:
+every service is constructed and registered before any is initialized, so the instance is already there.
+```
+
+When a service only needs the **reference**, to use at some point after boot, fetch it where it is used. Every service is constructed and registered before any of them is initialized, so the instance is always there.
+
+```csharp
+[ServiceAttribute(Lifetime.Global, typeof(IQuestService))]
+public class QuestService : IQuestService
+{
+    // Not injected: InventoryService reaches back for this one, and a mutual [Inject] pair would
+    // be a cycle that skips them both.
+    public void Grant(Reward reward) => ServiceLocator.FetchGlobalService<IInventoryService>().Add(reward);
+
+    public bool IsAsyncInit => false;
+}
+```
+
+**Rule of thumb:** inject it when you need the other service **initialized** before you are; fetch it at use time when you only need it to **exist**.
+
+### When a dependency fails
+
+A service whose dependency failed to initialize is not initialized either. It is marked `Failed` naming the dependency as the reason, rather than running against a half-built object.
+
+---
+
 ## Async Initialization
 
-Services can declare themselves async. The container initializes all sync services first, then fires all async initializations in parallel. The `ContainerServicesInitialized` event fires only after every async service has settled.
+Services can declare themselves async. The container starts every service that injected nothing at once, and releases each remaining service the moment the services it injected have settled — so independent work runs in parallel and a slow service only delays what actually depends on it. A synchronous service is simply one whose work finishes immediately when its turn comes, which is why it may inject an async one. The `ContainerServicesInitialized` event fires once every service has settled.
 
 ```csharp
 [ServiceAttribute(Lifetime.Global, typeof(IRemoteConfigService))]
@@ -497,7 +564,7 @@ void IService.DisposeService()
 - Implement `DisposeService()` (not `Dispose()`) when your service holds resources
 
 **Avoid:**
-- Creating circular dependencies between services in the same container; use `AwaitInitialization` if service A must wait for service B
+- Making two services in the same container `[Inject]` each other — each would wait for the other forever, so both are skipped; have one fetch the other at the point of use, and `AwaitInitialization` if it must be ready first
 - Storing references to Scene-lifetime services across scene loads
 - Reaching into another scene's services; coordinate through a `Global`/`ScopedContext` service or an orchestrator instead
 - Using the ServiceLocator in static constructors — `GameStart` may not have run yet

@@ -55,6 +55,15 @@ namespace QBS.ServiceLocator
 			return (TService)ContainedServices[typeof(TService)];
 		}
 
+		/// <summary>
+		///     Non-generic lookup, for field injection: an injected field's type is only known as a
+		///     <see cref="Type" /> there, and the generic overload cannot be reached without reflection.
+		/// </summary>
+		internal bool TryGetService(Type serviceType, out IService service)
+		{
+			return ContainedServices.TryGetValue(serviceType, out service);
+		}
+
 		public bool TryGetService<TService>(out TService service) where TService : class, IService
 		{
 			service = null;

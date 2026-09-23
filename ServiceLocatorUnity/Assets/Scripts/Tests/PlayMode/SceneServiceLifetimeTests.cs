@@ -491,7 +491,11 @@ namespace QBS.ServiceLocator.PlayModeTests
             IgnoreExpectedErrorLogs();
             ServiceLocator.RegisterSceneService<IPersistentTestService>(service);
 
-            Assert.IsNull(ServiceLocator.FetchSceneService<IPersistentTestService>(scene));
+            //The scene has a container, and the rejected service is not in it, so the fetch throws rather
+            //than handing back a null that would fail somewhere further away.
+            Assert.Throws<KeyNotFoundException>(() => ServiceLocator.FetchSceneService<IPersistentTestService>(scene));
+
+            //Nothing registered persistently, so the DontDestroyOnLoad scene has no container at all.
             Assert.IsNull(ServiceLocator.FetchPersistentSceneService<IPersistentTestService>());
         }
 

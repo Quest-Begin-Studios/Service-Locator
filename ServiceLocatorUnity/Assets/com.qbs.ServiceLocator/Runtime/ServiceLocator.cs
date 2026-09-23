@@ -234,11 +234,26 @@ namespace QBS.ServiceLocator
                     //collision and abandon discovery entirely, taking every other service with it.
                     if (serviceTypeOwners.TryGetValue(attribute.ServiceType, out var owner))
                     {
-                        Log.Error($"{type.FullName} and {owner.FullName} are both registered as {attribute.ServiceType.FullName}. Keeping {owner.FullName} and skipping {type.FullName}.");
-                        continue;
+                        var ownerAttribute = _allServicesConcreteMap[owner];
+                        if (attribute.Priority == ownerAttribute.Priority)
+                        {
+                            Log.Error($"{type.FullName} and {owner.FullName} both register {attribute.ServiceType.FullName} at {nameof(ServicePriority)}.{attribute.Priority}. Keeping {owner.FullName}. One of them needs a higher priority.");
+                            continue;
+                        }
+
+                        if (attribute.Priority < ownerAttribute.Priority)
+                        {
+                            continue;
+                        }
+
+                        //The loser is evicted rather than skipped: assembly enumeration order is undefined,
+                        //so whichever of the two the scan met first, the higher priority owns the interface.
+                        _allServicesConcreteMap.Remove(owner);
+                        _allServicesInterfaceMap.Remove(attribute.ServiceType);
+                        _serviceContextMap.Remove(attribute.ServiceType);
                     }
 
-                    serviceTypeOwners.Add(attribute.ServiceType, type);
+                    serviceTypeOwners[attribute.ServiceType] = type;
                     _allServicesConcreteMap.Add(type, attribute);
                     _allServicesInterfaceMap.Add(attribute.ServiceType, attribute);
 
@@ -259,10 +274,20 @@ namespace QBS.ServiceLocator
         /// </summary>
         private static bool ImplementsDisposeCorrectly(Type type)
         {
-            var map = type.GetInterfaceMap(typeof(IDisposable));
-            var disposeMethod = typeof(IDisposable).GetMethod(nameof(IDisposable.Dispose));
-            var index = Array.IndexOf(map.InterfaceMethods, disposeMethod);
-            return map.TargetMethods[index].DeclaringType == typeof(IService);
+            try
+            {
+                var map = type.GetInterfaceMap(typeof(IDisposable));
+                var disposeMethod = typeof(IDisposable).GetMethod(nameof(IDisposable.Dispose));
+                var index = Array.IndexOf(map.InterfaceMethods, disposeMethod);
+                return map.TargetMethods[index].DeclaringType == typeof(IService);
+            }
+            catch (Exception e)
+            {
+                //GetInterfaceMap is unavailable under some IL2CPP stripping levels. Assuming correct there
+                //keeps a stripped player registering its services instead of skipping every one of them.
+                Log.Warning($"Could not verify the Dispose implementation of {type.FullName}, assuming it is correct: {e.Message}");
+                return true;
+            }
         }
 
         #region Fetching Utilities
@@ -295,6 +320,13 @@ namespace QBS.ServiceLocator
         ///     Strictly local: no other loaded scene's container is searched. Returns <c>null</c> when
         ///     <paramref name="scene"/> has no container.
         /// </summary>
+        /// <remarks>
+        ///     A scene that has a container but not this service throws <see cref="KeyNotFoundException"/>,
+        ///     deliberately. Asking for a service the scene never registered is a mistake about that scene's
+        ///     composition, and a null would surface it somewhere else entirely; the throw makes whoever
+        ///     wants the service read the registration once. Use <see cref="TryGetSceneService{TService}(Scene, out TService)"/>
+        ///     where absence is a legitimate answer.
+        /// </remarks>
         public static TService FetchSceneService<TService>(Scene scene) where TService : class, IService
         {
             return GetSceneContainer(scene)?.GetService<TService>();
@@ -332,6 +364,7 @@ namespace QBS.ServiceLocator
 
         public static TService FetchGlobalService<TService>() where TService : class, IService
         {
+            AssertGlobalContainerExists();
             return _globalServiceContainer.GetService<TService>();
         }
 
@@ -389,6 +422,7 @@ namespace QBS.ServiceLocator
 
         public static bool TryGetGlobalService<TService>(out TService service) where TService : class, IService
         {
+            AssertGlobalContainerExists();
             return _globalServiceContainer.TryGetService(out service);
         }
 
@@ -396,7 +430,38 @@ namespace QBS.ServiceLocator
 
         #region Container Initialization Status
 
-        public static bool IsGlobalContainerInitialized => _globalServiceContainer.ContainerInitialized;
+        public static bool IsGlobalContainerInitialized
+        {
+            get
+            {
+                AssertGlobalContainerExists();
+                return _globalServiceContainer.ContainerInitialized;
+            }
+        }
+
+        /// <summary>
+        ///     Resolves a Global service for a container injecting it into one of its own. Global is the
+        ///     only lifetime a container can reach outside itself, and it is built before any other, so a
+        ///     miss here means the dependency was skipped at discovery rather than not built yet.
+        /// </summary>
+        internal static bool TryGetGlobalServiceForInjection(Type serviceType, out IService service)
+        {
+            service = null;
+            return _globalServiceContainer != null && _globalServiceContainer.TryGetService(serviceType, out service);
+        }
+
+        /// <summary>
+        ///     Throws when the Global container does not exist yet. <see cref="GameStart"/> builds it on
+        ///     SubsystemRegistration in a player, but an EditMode test has to call it itself, and without
+        ///     this the miss surfaces as a NullReferenceException from inside the locator.
+        /// </summary>
+        private static void AssertGlobalContainerExists()
+        {
+            if (_globalServiceContainer == null)
+            {
+                throw new InvalidOperationException("ServiceLocator has not started; are you in an EditMode test? Call ServiceLocator.GameStart() first.");
+            }
+        }
 
         /// <summary>
         ///     <c>true</c> once <paramref name="scene"/> has a container, i.e. once at least one of its
