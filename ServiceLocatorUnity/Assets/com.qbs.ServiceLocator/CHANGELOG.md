@@ -4,6 +4,12 @@ All notable changes to this package are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.1] - 2026-09-24
+
+### Changed
+
+- **Synchronous services initialize before asynchronous ones.** Services that are ready to start now wait in two queues, one for synchronous and one for asynchronous initialization. The synchronous queue is emptied first, including any synchronous services released while it drains. Only then does an asynchronous service start, and the synchronous queue is drained again after each start. Cheap synchronous work finishes on the frame it becomes ready instead of queueing behind async starts, while each service still waits for its own dependencies.
+
 ## [2.2.0] - 2026-09-21
 
 ### Added

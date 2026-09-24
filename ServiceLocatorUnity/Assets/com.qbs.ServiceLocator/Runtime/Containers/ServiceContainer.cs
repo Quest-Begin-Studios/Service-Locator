@@ -26,7 +26,8 @@ namespace QBS.ServiceLocator
 		private readonly Dictionary<IService, List<IService>> _dependents = new();
 		private readonly Dictionary<IService, int> _pendingDependencies = new();
 		private readonly List<IService> _initializationCandidates = new();
-		private readonly Queue<IService> _readyToInitialize = new();
+		private readonly Queue<IService> _readyToSyncInitialize = new();
+		private readonly Queue<IService> _readyToAsyncInitialize = new();
 
 		private Dictionary<Type, ServiceAttribute> _attributeByServiceType;
 		private int _settledCount;
@@ -492,7 +493,7 @@ namespace QBS.ServiceLocator
 			{
 				if (_pendingDependencies[serviceInstance] == 0)
 				{
-					_readyToInitialize.Enqueue(serviceInstance);
+					EnqueueReady(serviceInstance);
 				}
 			}
 
@@ -500,30 +501,56 @@ namespace QBS.ServiceLocator
 		}
 
 		/// <summary>
-		///     Runs everything currently unblocked. A synchronous service settles inside the loop and can
-		///     release more work, so this drains rather than iterating a snapshot; an asynchronous one
-		///     settles later and drains again from its own continuation.
+		///     Sorts an unblocked service into the queue matching how it initializes.
+		/// </summary>
+		private void EnqueueReady(IService serviceInstance)
+		{
+			if (serviceInstance.IsAsyncInit)
+			{
+				_readyToAsyncInitialize.Enqueue(serviceInstance);
+				return;
+			}
+
+			_readyToSyncInitialize.Enqueue(serviceInstance);
+		}
+
+		/// <summary>
+		///     Runs everything currently unblocked, draining the synchronous queue completely before starting
+		///     any asynchronous service. A synchronous service settles inside the loop and can release more
+		///     work, so this drains rather than iterating a snapshot; after each asynchronous start the
+		///     synchronous queue is drained again in case that start settled and released anything. An
+		///     asynchronous service that settles later drains again from its own continuation.
 		/// </summary>
 		private void DrainReadyQueue()
 		{
-			while (_readyToInitialize.Count > 0)
+			while (_readyToSyncInitialize.Count > 0 || _readyToAsyncInitialize.Count > 0)
 			{
-				var serviceInstance = _readyToInitialize.Dequeue();
-
-				if (HasFailedDependency(serviceInstance, _inContainerDependencies[serviceInstance]))
+				while (_readyToSyncInitialize.Count > 0)
 				{
+					var serviceInstance = _readyToSyncInitialize.Dequeue();
+
+					if (HasFailedDependency(serviceInstance, _inContainerDependencies[serviceInstance]))
+					{
+						OnServiceSettled(serviceInstance);
+						continue;
+					}
+
+					serviceInstance.Initialize();
 					OnServiceSettled(serviceInstance);
-					continue;
 				}
 
-				if (serviceInstance.IsAsyncInit)
+				if (_readyToAsyncInitialize.Count > 0)
 				{
-					InitializeAsync(serviceInstance).Forget();
-					continue;
-				}
+					var serviceInstance = _readyToAsyncInitialize.Dequeue();
 
-				serviceInstance.Initialize();
-				OnServiceSettled(serviceInstance);
+					if (HasFailedDependency(serviceInstance, _inContainerDependencies[serviceInstance]))
+					{
+						OnServiceSettled(serviceInstance);
+						continue;
+					}
+
+					InitializeAsync(serviceInstance).Forget();
+				}
 			}
 
 			TryCompleteContainer();
@@ -570,7 +597,7 @@ namespace QBS.ServiceLocator
 			{
 				if (--_pendingDependencies[dependent] == 0)
 				{
-					_readyToInitialize.Enqueue(dependent);
+					EnqueueReady(dependent);
 				}
 			}
 		}
@@ -614,7 +641,8 @@ namespace QBS.ServiceLocator
 			_dependents.Clear();
 			_pendingDependencies.Clear();
 			_initializationCandidates.Clear();
-			_readyToInitialize.Clear();
+			_readyToSyncInitialize.Clear();
+			_readyToAsyncInitialize.Clear();
 			_settledCount = 0;
 			ContainerServicesInitialized = null;
 		}

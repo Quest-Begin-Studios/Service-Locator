@@ -55,7 +55,7 @@ uses: UniTask through the OpenUPM scoped registry, QBS Core and the locator by g
 Leave the QBS Core URL untagged, as above, to track its latest revision — that is the intended setup, and
 the locator is kept working against Core's default branch. Pin it with `#v1.1.1` or later only when you
 need a fixed revision; anything earlier has no `AssemblyCompat`, which service discovery needs. Append
-`#v2.2.0` to the locator's own URL to pin it to a release.
+`#v2.2.1` to the locator's own URL to pin it to a release.
 
 ### Via Unity Package Manager (Git URL)
 
