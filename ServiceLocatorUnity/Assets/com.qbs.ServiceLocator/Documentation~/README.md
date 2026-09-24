@@ -53,7 +53,7 @@ This package also depends on [QBS Core](https://github.com/Quest-Begin-Studios/Q
 }
 ```
 
-Unity Package Manager does not resolve git-URL dependencies transitively, so this step can't be skipped even though it's also listed in this package's own `package.json`.
+Unity Package Manager does not resolve git-URL dependencies transitively, and a `dependencies` entry cannot be a git URL, so this package does not declare QBS Core at all — naming it in your own manifest is the only thing that resolves it. Leave it untagged, as above, to track Core's latest revision, which is the intended setup.
 
 QBS Core 1.1.1 or later is required: the `QBS.ServiceLocator` assembly references the `QBS.Core` assembly introduced in that version, and service discovery enumerates loaded assemblies through its `AssemblyCompat` wrapper. That wrapper is what keeps discovery compiling across the Unity 6000.4 assembly API change, where `AppDomain.CurrentDomain.GetAssemblies()` gave way to `UnityEngine.Assemblies.CurrentAssemblies`. Pin the dependency with `#v1.1.1` if you need a fixed core version.
 
@@ -109,6 +109,37 @@ Marks a class for automatic discovery. The attribute specifies the **lifetime sc
 ```
 
 The attribute is the **single source of truth** for a service's lifetime — registration validates against it and refuses a mismatch, rather than letting the call site decide.
+
+### ServicePriority
+
+Both constructors take an optional third argument, deciding which type wins when two of them claim the same `ServiceType`. Without it, the winner is whichever one assembly enumeration happened to reach first.
+
+```csharp
+public enum ServicePriority
+{
+    Default,   // a package's own implementation: the one a consumer is free to replace
+    Override,  // a game's replacement for a package default
+    Tests,     // a test fake; wins over everything, and ships in no player
+}
+```
+
+```csharp
+// In the package.
+[ServiceAttribute(Lifetime.Global, typeof(IAnalyticsService))]
+public class DefaultAnalyticsService : IAnalyticsService { }
+
+// In the game — replaces the package's, whichever order discovery meets the two in.
+[ServiceAttribute(Lifetime.Global, typeof(IAnalyticsService), ServicePriority.Override)]
+public class SteamAnalyticsService : IAnalyticsService { }
+
+// In a test assembly — replaces both.
+[ServiceAttribute(Lifetime.Global, typeof(IAnalyticsService), ServicePriority.Tests)]
+public class FakeAnalyticsService : IAnalyticsService { }
+```
+
+- The **higher priority wins** regardless of discovery order: a lower-priority type is skipped silently, and a higher-priority one evicts an owner the scan already registered.
+- **Equal priorities are an error.** The first type met is kept and the collision is logged naming both, so neither two packages nor two game services can quietly fight over one interface.
+- Precedence is the **declaration order of the enum**, so a tier can be added later without renumbering anything.
 
 ### ConfigurationState
 

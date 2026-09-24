@@ -1,11 +1,13 @@
 # QBS Service Locator
 
-A lightweight, reflection-driven Service Locator for Unity. Provides centralized service management with automatic discovery, three lifetime scopes, and first-class async initialization support — no boilerplate wiring required.
+A lightweight, reflection-driven Service Locator for Unity. Provides centralized service management with automatic discovery, four lifetime scopes, and first-class async initialization support — no boilerplate wiring required.
 
 ## Features
 
 - **Automatic discovery** — tag a class with `[ServiceAttribute]` and it is found, instantiated, and initialized at runtime; no manual registration needed
-- **Three lifetime scopes** — `Global` (application lifetime), `ScopedContext` (custom game-state scopes), and `Scene` (per-scene, manually registered)
+- **Four lifetime scopes** — `Global` (application lifetime), `ScopedContext` (custom game-state scopes), `Scene` (per-scene, manually registered), and `PersistentScene` (app-lived GameObjects, in `DontDestroyOnLoad`)
+- **Declared dependencies** — mark a field `[Inject]` and the container fills it and finishes that dependency first; initialization follows the dependency graph, in parallel wherever it can
+- **Replaceable implementations** — `ServicePriority` lets a game override a package's service, or a test fake override both, instead of assembly order deciding
 - **Sync and async initialization** — services declare `IsAsyncInit`; async services initialize in parallel without blocking the main thread
 - **State tracking** — each service exposes a `ConfigurationState` (`Uninitialized` → `InProgress` → `Success` / `Failed`)
 - **Safe retrieval** — `TryGet*` variants return `false` instead of throwing when a service is missing
@@ -53,7 +55,7 @@ uses: UniTask through the OpenUPM scoped registry, QBS Core and the locator by g
 Leave the QBS Core URL untagged, as above, to track its latest revision — that is the intended setup, and
 the locator is kept working against Core's default branch. Pin it with `#v1.1.1` or later only when you
 need a fixed revision; anything earlier has no `AssemblyCompat`, which service discovery needs. Append
-`#v2.1.0` to the locator's own URL to pin it to a release.
+`#v2.2.0` to the locator's own URL to pin it to a release.
 
 ### Via Unity Package Manager (Git URL)
 
@@ -161,7 +163,7 @@ public class AudioService : IAudioService
 {
     public bool IsAsyncInit => false;
 
-    protected override bool InitializeService()
+    bool IService.InitializeService()
     {
         // one-time setup
         return true;
@@ -175,7 +177,7 @@ var audio = ServiceLocator.FetchGlobalService<IAudioService>();
 audio.Play("theme");
 ```
 
-For full usage documentation — scoped contexts, scene services, async initialization, the complete API reference, and best practices — see the [package README](ServiceLocatorUnity/Assets/com.qbs.ServiceLocator/README.md).
+For full usage documentation — scoped contexts, scene services, async initialization, the complete API reference, and best practices — see the [usage guide](ServiceLocatorUnity/Assets/com.qbs.ServiceLocator/Documentation~/README.md).
 
 ## License
 
